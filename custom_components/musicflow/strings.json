@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "配置 MusicFlow",
+        "description": "输入 MusicFlow 服务器地址与 API Key",
+        "data": {
+          "url": "服务器地址(如 http://192.168.1.10:46400)",
+          "api_key": "API Key"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "发现 MusicFlow",
+        "description": "在 {url} 发现了 MusicFlow,请输入 API Key 确认。",
+        "data": {
+          "api_key": "API Key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接到 MusicFlow,请检查地址与 API Key"
+    },
+    "abort": {
+      "already_configured": "该 MusicFlow 实例已配置"
+    }
+  }
+}

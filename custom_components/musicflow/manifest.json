@@ -1,0 +1,12 @@
+{
+  "domain": "musicflow",
+  "name": "MusicFlow",
+  "documentation": "https://github.com/ray5378/hass-musicflow",
+  "issue_tracker": "https://github.com/ray5378/hass-musicflow/issues",
+  "codeowners": ["@ray5378"],
+  "config_flow": true,
+  "iot_class": "local_push",
+  "version": "1.0.0",
+  "zeroconf": ["_musicflow._tcp.local."],
+  "requirements": ["websockets>=12.0"]
+}

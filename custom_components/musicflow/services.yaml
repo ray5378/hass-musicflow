@@ -1,0 +1,15 @@
+play_media:
+  name: Play media
+  description: 在指定的 MusicFlow 设备上播放媒体(单曲/专辑/歌单)
+  target:
+    entity:
+      integration: musicflow
+      domain: media_player
+  fields:
+    media_content_id:
+      name: Media content ID
+      description: "自定义 URI,如 musicflow://song/<id>、musicflow://album/<id>、musicflow://playlist/<id>"
+      required: true
+      example: "musicflow://album/abc123"
+      selector:
+        text:
