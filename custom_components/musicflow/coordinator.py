@@ -90,7 +90,13 @@ class MusicFlowCoordinator(DataUpdateCoordinator):
         msg_type = msg.get("type")
         device_id = msg.get("device_id")
 
-        if msg_type == "player_state_changed" and device_id:
+        if msg_type == "snapshot":
+            # 初始全量快照:devices 是 { deviceId: status, ... }
+            snapshot_devices = msg.get("devices", {}) or {}
+            for dev_id, status in snapshot_devices.items():
+                self.devices[dev_id] = status
+                self._known_device_ids.add(dev_id)
+        elif msg_type == "player_state_changed" and device_id:
             existing = self.devices.get(device_id, {})
             existing.update(msg.get("state", {}))
             self.devices[device_id] = existing
