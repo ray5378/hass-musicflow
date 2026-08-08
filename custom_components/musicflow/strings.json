@@ -1,27 +1,85 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "配置 MusicFlow",
-        "description": "输入 MusicFlow 服务器地址与 API Key",
+        "title": "Connect to MusicFlow",
+        "description": "Enter your MusicFlow server address and API key. The API key can be created in MusicFlow under Settings \u2192 Account.",
         "data": {
-          "url": "服务器地址(如 http://192.168.1.10:46400)",
-          "api_key": "API Key"
+          "url": "Server address",
+          "api_key": "API key",
+          "verify_ssl": "Verify SSL certificate"
+        },
+        "data_description": {
+          "url": "For example http://192.168.1.10:46400"
         }
       },
       "zeroconf_confirm": {
-        "title": "发现 MusicFlow",
-        "description": "在 {url} 发现了 MusicFlow,请输入 API Key 确认。",
+        "title": "MusicFlow discovered",
+        "description": "Found {name} at {url}. Enter an API key to finish setup.",
         "data": {
-          "api_key": "API Key"
+          "api_key": "API key",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate MusicFlow",
+        "description": "The API key for {url} is no longer valid. Enter a new one.",
+        "data": {
+          "api_key": "API key"
         }
       }
     },
     "error": {
-      "cannot_connect": "无法连接到 MusicFlow,请检查地址与 API Key"
+      "cannot_connect": "Cannot reach the MusicFlow server. Check the address and that the server is running.",
+      "invalid_auth": "The API key was rejected.",
+      "unknown": "Unexpected error"
     },
     "abort": {
-      "already_configured": "该 MusicFlow 实例已配置"
+      "already_configured": "This MusicFlow server is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "services": {
+    "play_content": {
+      "name": "Play content",
+      "description": "Resolve a MusicFlow library item into a queue and play it on the selected player.",
+      "fields": {
+        "content_type": {
+          "name": "Content type",
+          "description": "Kind of library item to play."
+        },
+        "content_id": {
+          "name": "Content ID",
+          "description": "MusicFlow identifier of the item. For genre, use the genre name."
+        },
+        "start_index": {
+          "name": "Start index",
+          "description": "Index of the track to start from."
+        },
+        "play_mode": {
+          "name": "Play mode",
+          "description": "Queue play mode to apply."
+        },
+        "enqueue": {
+          "name": "Enqueue",
+          "description": "Append to the current queue instead of replacing it."
+        }
+      }
+    },
+    "set_play_mode": {
+      "name": "Set play mode",
+      "description": "Change the queue play mode.",
+      "fields": {
+        "play_mode": {
+          "name": "Play mode",
+          "description": "order = sequential, one = repeat one, all = repeat all, shuffle = random."
+        }
+      }
+    },
+    "clear_queue": {
+      "name": "Clear queue",
+      "description": "Remove all tracks from the player queue."
     }
   }
 }

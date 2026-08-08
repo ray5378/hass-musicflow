@@ -1,0 +1,85 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "连接 MusicFlow",
+        "description": "填写 MusicFlow 服务器地址与 API Key。API Key 可在 MusicFlow 的「设置 → 账户」中生成。",
+        "data": {
+          "url": "服务器地址",
+          "api_key": "API Key",
+          "verify_ssl": "校验 SSL 证书"
+        },
+        "data_description": {
+          "url": "例如 http://192.168.1.10:46400"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "发现 MusicFlow",
+        "description": "在 {url} 发现了 {name}，填入 API Key 即可完成添加。",
+        "data": {
+          "api_key": "API Key",
+          "verify_ssl": "校验 SSL 证书"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新认证 MusicFlow",
+        "description": "{url} 的 API Key 已失效，请填写新的 Key。",
+        "data": {
+          "api_key": "API Key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "连不上 MusicFlow 服务器，请检查地址是否正确、服务是否在运行。",
+      "invalid_auth": "API Key 被拒绝。",
+      "unknown": "出现未知错误"
+    },
+    "abort": {
+      "already_configured": "该 MusicFlow 服务器已配置。",
+      "reauth_successful": "重新认证成功。"
+    }
+  },
+  "services": {
+    "play_content": {
+      "name": "播放内容",
+      "description": "把曲库中的歌曲/专辑/歌单/艺术家/流派解析成队列，在指定播放器上播放。",
+      "fields": {
+        "content_type": {
+          "name": "内容类型",
+          "description": "要播放的曲库条目类型。"
+        },
+        "content_id": {
+          "name": "内容 ID",
+          "description": "MusicFlow 中该条目的 ID；类型为 genre 时直接填流派名。"
+        },
+        "start_index": {
+          "name": "起始序号",
+          "description": "从队列中的第几首开始播放。"
+        },
+        "play_mode": {
+          "name": "播放模式",
+          "description": "同时设置队列的播放模式。"
+        },
+        "enqueue": {
+          "name": "追加到队列",
+          "description": "追加到当前队列末尾，而不是替换当前队列。"
+        }
+      }
+    },
+    "set_play_mode": {
+      "name": "设置播放模式",
+      "description": "修改队列的播放模式。",
+      "fields": {
+        "play_mode": {
+          "name": "播放模式",
+          "description": "order = 顺序播放，one = 单曲循环，all = 列表循环，shuffle = 随机播放。"
+        }
+      }
+    },
+    "clear_queue": {
+      "name": "清空队列",
+      "description": "移除播放器队列中的全部曲目。"
+    }
+  }
+}

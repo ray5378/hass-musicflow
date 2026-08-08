@@ -1,25 +1,68 @@
-"""MusicFlow 集成常量。"""
+"""MusicFlow 集成常量。
 
-DOMAIN = "musicflow"
+路径前缀务必与 MusicFlow 后端 index.ts 的挂载点保持一致:
+    app.route("/rest", restRoutes)            → OpenSubsonic
+    app.route("/rest/api", apiRoutes)         → 内部 REST(/v1/...)
+    server upgrade "/ws"                      → WebSocket
+注意 `/api/*` 挂的是空的 navidromeRoutes,不要往那里发请求。
+"""
 
-# ConfigEntry 字段
-CONF_URL = "url"  # MusicFlow 服务器地址,如 http://192.168.1.10:46400
-CONF_API_KEY = "api_key"  # MusicFlow 用户的 API Key(Bearer 认证)
+from __future__ import annotations
 
-# 默认值
-DEFAULT_PORT = 46400
+from typing import Final
 
-# WebSocket 重连延迟(秒)
-WS_RECONNECT_DELAY = 5
+DOMAIN: Final = "musicflow"
 
-# Zeroconf 服务类型(必须与后端 mDNS 广播一致)
-ZEROCONF_TYPE = "_musicflow._tcp.local."
+# ==================== ConfigEntry 字段 ====================
+CONF_URL: Final = "url"  # MusicFlow 服务器地址,如 http://192.168.1.10:46400
+CONF_API_KEY: Final = "api_key"  # 用户 API Key(Bearer 认证)
+CONF_VERIFY_SSL: Final = "verify_ssl"
 
-# 自定义 media_content_id 前缀
-MEDIA_URI_PREFIX = "musicflow://"
+DEFAULT_PORT: Final = 46400
 
-# 浏览器默认拉取数量
-BROWSE_LIMIT = 200
+# ==================== 后端路径 ====================
+# 内部 REST API 前缀(apiRoutes 挂在 /rest/api,路由自身再带 /v1)
+API_PREFIX: Final = "/rest/api/v1"
+# OpenSubsonic 前缀(浏览曲库用)
+SUBSONIC_PREFIX: Final = "/rest"
+# WebSocket 路径(挂在根,不在 /rest 下)
+WS_PATH: Final = "/ws"
 
-# 服务名
-SERVICE_PLAY_MEDIA = "play_media"
+# ==================== 运行参数 ====================
+REQUEST_TIMEOUT: Final = 15
+WS_HEARTBEAT: Final = 30
+WS_RECONNECT_MIN: Final = 5
+WS_RECONNECT_MAX: Final = 120
+# WS 已覆盖实时推送,轮询只作兜底(组状态没有独立事件,靠这个刷新)
+POLL_INTERVAL_SECONDS: Final = 30
+
+# Zeroconf 服务类型(必须与后端 services/discovery/mdns.ts 广播一致)
+ZEROCONF_TYPE: Final = "_musicflow._tcp.local."
+
+# ==================== 媒体 URI ====================
+MEDIA_URI_PREFIX: Final = "musicflow://"
+# /rest/api/v1/play 支持的内容类型(见 backend services/content.ts)
+PLAYABLE_TYPES: Final = ("song", "album", "playlist", "artist", "genre")
+
+BROWSE_LIMIT: Final = 300
+
+# ==================== peer 种类 ====================
+PEER_KIND_LOCAL: Final = "local"
+PEER_KIND_DLNA: Final = "dlna"
+PEER_KIND_GROUP: Final = "group"
+# 只有 dlna / group 由后端驱动音频,能被 HA 控制;
+# local peer 的音频跑在浏览器里,后端只存队列,不建实体。
+CONTROLLABLE_KINDS: Final = (PEER_KIND_DLNA, PEER_KIND_GROUP)
+
+# ==================== 自定义服务 ====================
+SERVICE_PLAY_CONTENT: Final = "play_content"
+SERVICE_SET_PLAY_MODE: Final = "set_play_mode"
+SERVICE_CLEAR_QUEUE: Final = "clear_queue"
+
+ATTR_CONTENT_TYPE: Final = "content_type"
+ATTR_CONTENT_ID: Final = "content_id"
+ATTR_START_INDEX: Final = "start_index"
+ATTR_PLAY_MODE: Final = "play_mode"
+ATTR_ENQUEUE: Final = "enqueue"
+
+PLAY_MODES: Final = ("order", "one", "all", "shuffle")

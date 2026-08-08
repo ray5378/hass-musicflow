@@ -1,15 +1,64 @@
-play_media:
-  name: Play media
-  description: 在指定的 MusicFlow 设备上播放媒体(单曲/专辑/歌单)
+play_content:
   target:
     entity:
       integration: musicflow
       domain: media_player
   fields:
-    media_content_id:
-      name: Media content ID
-      description: "自定义 URI,如 musicflow://song/<id>、musicflow://album/<id>、musicflow://playlist/<id>"
+    content_type:
       required: true
-      example: "musicflow://album/abc123"
+      example: playlist
+      selector:
+        select:
+          options:
+            - song
+            - album
+            - playlist
+            - artist
+            - genre
+    content_id:
+      required: true
+      example: "3f1c2b8a-..."
       selector:
         text:
+    start_index:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 9999
+          mode: box
+    play_mode:
+      selector:
+        select:
+          options:
+            - order
+            - one
+            - all
+            - shuffle
+    enqueue:
+      default: false
+      selector:
+        boolean:
+
+set_play_mode:
+  target:
+    entity:
+      integration: musicflow
+      domain: media_player
+  fields:
+    play_mode:
+      required: true
+      example: shuffle
+      selector:
+        select:
+          options:
+            - order
+            - one
+            - all
+            - shuffle
+
+clear_queue:
+  target:
+    entity:
+      integration: musicflow
+      domain: media_player

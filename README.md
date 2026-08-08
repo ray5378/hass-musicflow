@@ -4,19 +4,20 @@
 
 ## 功能
 
-- **媒体播放器实体**:每个 MusicFlow 管理的 DLNA 设备变成一个 HA `media_player` 实体
-- **实时状态**:通过 WebSocket 长连接推送播放状态(不用轮询)
-- **媒体浏览**:在 HA 媒体浏览器中浏览 MusicFlow 的艺术家 / 专辑 / 歌单 / 曲目
-- **播放控制**:play / pause / stop / seek / volume / next / prev
-- **点播播放**:单曲投射、整张专辑入队、歌单入队
-- **Zeroconf 自动发现**:MusicFlow 后端广播后,HA 自动发现并提示配置
+- **媒体播放器实体**:MusicFlow 里每个 **DLNA 设备**和每个**播放组**各对应一个 HA `media_player` 实体
+- **实时状态**:通过 WebSocket 长连接推送播放状态,断线自动重连;另有 30s 轮询兜底
+- **媒体浏览**:在 HA 媒体浏览器中浏览 **歌单 / 专辑 / 艺术家 / 流派**,带封面
+- **播放控制**:play / pause / stop / next / previous / seek / volume / 音量步进 / 循环 / 随机 / 清空队列
+- **点播播放**:单曲、整张专辑、歌单、艺术家、流派,支持追加入队
+- **Zeroconf 自动发现**:MusicFlow 后端广播后,HA 自动发现并提示配置;IP 变化会自动更新
+- **凭据失效自动重认证**:API Key 失效时 HA 会弹出重新认证流程
 
 ## 安装
 
 ### 方式 A:通过 HACS(推荐)
 
 1. 安装 [HACS](https://hacs.xyz/)
-2. HACS → 集成 → 右上角 **⋮ → 自定义仓库**
+2. HACS → 右上角 **⋮ → 自定义仓库**
 3. 填入:`https://github.com/ray5378/hass-musicflow`,类别选 **Integration**
 4. 搜索 **MusicFlow** → 下载
 5. **重启 Home Assistant**
@@ -28,25 +29,44 @@
 
 ## 配置
 
-如果已运行 MusicFlow(加载项或独立 Docker),集成会通过 Zeroconf 自动发现。手动配置时填写:
+如果已运行 MusicFlow(加载项或独立 Docker),集成会通过 Zeroconf 自动发现,确认即可。手动配置时填写:
 
 | 字段 | 说明 |
 |---|---|
-| URL | MusicFlow 地址,如 `http://192.168.1.10:46400` |
-| API Key | MusicFlow 用户的 API Key(在 MusicFlow 设置中生成) |
+| URL | MusicFlow 地址,如 `http://192.168.1.10:46400`(省略协议和端口时按 `http` / `46400` 补全) |
+| API Key | MusicFlow 用户的 API Key(在 MusicFlow 的「设置 → 账号」中生成) |
+| 校验 SSL 证书 | 仅在使用 https 且证书为自签名时取消勾选 |
 
-## 架构
+## 实体与设备
 
+集成会注册一个网关设备(MusicFlow 服务端本身),每个播放器实体挂在它下面:
+
+- **DLNA 设备** → `media_player.<设备名>`
+- **播放组** → `media_player.<组名>`,状态取自组内 leader 设备
+
+MusicFlow 里新增/移除设备或播放组时,实体会在下一次刷新时自动增补。
+
+## 服务
+
+除标准 `media_player.*` 服务外,还提供三个专用服务:
+
+| 服务 | 说明 |
+|---|---|
+| `musicflow.play_content` | 按内容类型播放(song / album / playlist / artist / genre),可指定起始位置、播放模式、是否追加 |
+| `musicflow.set_play_mode` | 设置播放模式:`order` 顺序 / `shuffle` 随机 / `one` 单曲循环 / `all` 列表循环 |
+| `musicflow.clear_queue` | 清空播放队列 |
+
+示例:
+
+```yaml
+service: musicflow.play_content
+target:
+  entity_id: media_player.living_room_speaker
+data:
+  content_type: playlist
+  content_id: "12"
+  play_mode: shuffle
 ```
-HA 仪表盘 (控制面)
-  └─ media_player.musicflow_<device>
-       └─ 集成 (Python, 本仓库)
-            ├─ REST 调用 → MusicFlow 后端 (DLNA 控制 + 队列)
-            └─ WebSocket ← MusicFlow 后端 (状态推送)
-                              └─ SOAP → DLNA 设备 (真正发声)
-```
-
-HA 只充当**远程控制器**,音频流始终在 MusicFlow 后端 ↔ DLNA 设备之间。
 
 ## media_content_id 格式
 
@@ -54,20 +74,35 @@ HA 只充当**远程控制器**,音频流始终在 MusicFlow 后端 ↔ DLNA 设
 
 | URI | 行为 |
 |---|---|
-| `musicflow://song/<id>` | 投射单曲 |
+| `musicflow://song/<id>` | 播放单曲 |
 | `musicflow://album/<id>` | 整张专辑入队播放 |
 | `musicflow://playlist/<id>` | 歌单入队播放 |
+| `musicflow://artist/<id>` | 艺术家全部曲目入队播放 |
+| `musicflow://genre/<名称>` | 该流派曲目入队播放 |
 
-## 前置要求
+也可以直接用 `media_content_type: playlist` + `media_content_id: "12"` 这种形式。
+带 `enqueue: add` 参数时为追加到队列尾部而非立即替换。
 
-MusicFlow 后端需提供以下端点(主仓库待实现):
+## 架构
 
-- `GET /ws` —— WebSocket 状态推送
-- `_musicflow._tcp.local.` —— mDNS/Zeroconf 广播
-- `POST /api/v1/dlna/devices/:id/queue/play` 等队列管理端点
-- `/rest/*` 的 Bearer 认证旁路(集成用 API Key 调用 OpenSubsonic 接口)
+```
+HA 仪表盘 (控制面)
+  └─ media_player.<peer>
+       └─ 集成 (Python, 本仓库)
+            ├─ REST  → /rest/api/v1/...   (peer 状态 / 队列 / 播放控制)
+            ├─ REST  → /rest/...          (OpenSubsonic 曲库浏览与封面)
+            └─ WS    ← /ws                (播放状态实时推送)
+                          └─ SOAP → DLNA 设备 (真正发声)
+```
 
-详见 [集成方案文档](https://github.com/ray5378/MusicFlow) 中的 HA 集成章节。
+HA 只充当**远程控制器**,音频流始终在 MusicFlow 后端 ↔ DLNA 设备之间,不经过 HA。
+
+## 版本要求
+
+- Home Assistant **2024.12.0** 及以上
+- MusicFlow 服务端 **v1.0.3** 及以上(需要 `/rest/api/v1/play` 支持 `song` 类型)
+
+集成不引入任何额外 Python 依赖,WebSocket 复用 HA 自带的 aiohttp。
 
 ## 相关仓库
 

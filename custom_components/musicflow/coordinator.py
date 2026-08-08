@@ -1,136 +1,404 @@
-"""DataUpdateCoordinator + WS 事件分发。
+"""MusicFlow 数据协调器。
 
-WS 推来的 player_state_changed / media_changed / queue_changed / device_list_changed
-事件更新到本地状态,触发所有实体刷新。首次加载用 REST 拉取全量快照,
-之后完全依赖 WS 推送(local_push)。
+状态来源有两条,优先实时、轮询兜底:
+
+1. WebSocket(`/ws`)—— 主通道。后端 services/ws/index.ts 会推:
+   - peer_snapshot / peer_registered / peer_available / peer_unavailable
+   - peer_queue_changed / peer_queue_cleared
+   - snapshot / player_state_changed / media_changed / queue_changed(按 device_id)
+   - group_changed / group_deleted / device_list_changed
+
+2. 定时轮询(POLL_INTERVAL_SECONDS)—— 兜底。WS 断线、或某些状态没有独立事件
+   (典型是 group 的传输状态)时靠它纠偏。
+
+group 的实时性单独处理:组状态派生自 leader 设备,而 leader 只会以自己的
+device_id 发 player_state_changed。所以这里维护 device → group 的反向索引,
+收到成员设备状态变化时防抖拉一次 `/v1/peers/group:<id>/status`。
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
-from .api import MusicFlowClient
-from .const import WS_RECONNECT_DELAY
+from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError
+from .const import (
+    CONTROLLABLE_KINDS,
+    DOMAIN,
+    PEER_KIND_DLNA,
+    PEER_KIND_GROUP,
+    POLL_INTERVAL_SECONDS,
+    WS_RECONNECT_MAX,
+    WS_RECONNECT_MIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
+# 成员设备状态变化后,合并多次抖动再拉组状态
+GROUP_REFRESH_DEBOUNCE = 1.5
 
-class MusicFlowCoordinator(DataUpdateCoordinator):
-    """MusicFlow 协调器:维护设备状态 + WS 事件分发。"""
+
+@dataclass
+class PeerState:
+    """单个 peer 的完整状态(peer 元信息 + 队列 + 传输状态)。"""
+
+    peer_id: str
+    kind: str
+    name: str
+    available: bool = False
+    queue: dict[str, Any] = field(default_factory=dict)
+    status: dict[str, Any] = field(default_factory=dict)
+    status_updated_at: datetime | None = None
+
+    @property
+    def controllable(self) -> bool:
+        """local peer 的音频跑在浏览器里,HA 控不了,不建实体。"""
+        return self.kind in CONTROLLABLE_KINDS
+
+    @property
+    def raw_id(self) -> str:
+        """去掉 `dlna:` / `group:` 前缀的裸 id。"""
+        _, _, rest = self.peer_id.partition(":")
+        return rest or self.peer_id
+
+    @property
+    def current_item(self) -> dict[str, Any] | None:
+        """当前曲目:优先队列(信息全,带 albumId/duration),回退设备上报的 media。"""
+        items = self.queue.get("items") or []
+        index = self.queue.get("currentIndex", -1)
+        if isinstance(index, int) and 0 <= index < len(items):
+            item = items[index]
+            if isinstance(item, dict):
+                return item
+        media = self.status.get("media")
+        return media if isinstance(media, dict) else None
+
+    def apply_peer(self, peer: dict[str, Any]) -> None:
+        """合并一条后端 Peer / PeerWithQueue 记录。"""
+        self.name = peer.get("name") or self.name
+        self.available = bool(peer.get("available"))
+        queue = peer.get("queue")
+        if isinstance(queue, dict):
+            self.queue = queue
+
+    def apply_status(self, status: dict[str, Any]) -> None:
+        """合并一条 DeviceStatus。字段缺失时保留旧值,避免局部事件抹掉已知状态。"""
+        merged = dict(self.status)
+        merged.update({k: v for k, v in status.items() if v is not None})
+        self.status = merged
+        self.status_updated_at = dt_util.utcnow()
+
+
+class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
+    """维护全部 peer 的状态,并把 WS 推送翻译成实体更新。"""
 
     def __init__(
         self,
         hass: HomeAssistant,
-        client: MusicFlowClient,
         entry: ConfigEntry,
+        client: MusicFlowClient,
     ) -> None:
         super().__init__(
             hass,
             _LOGGER,
-            name="MusicFlow",
-            update_interval=None,  # 不轮询,靠 WS 推送
+            name=DOMAIN,
+            update_interval=timedelta(seconds=POLL_INTERVAL_SECONDS),
         )
+        self.entry = entry
         self.client = client
-        self.config_entry = entry
-        # device_id -> status(含 state/position/duration/volume/media)
-        self.devices: dict[str, dict] = {}
-        # device_id -> queue snapshot
-        self.queues: dict[str, dict] = {}
-        self._reconnect_task: asyncio.Task | None = None
-        self._known_device_ids: set[str] = set()
+        self.peers: dict[str, PeerState] = {}
+        # device_id → 包含它的 group_id 集合(用于把设备事件放大到组)
+        self._device_groups: dict[str, set[str]] = {}
+        self._ws_task: asyncio.Task | None = None
+        self._ws_connected = False
+        self._closing = False
+        self._pending_groups: set[str] = set()
+        self._group_debounce_cancel: Any = None
 
-    async def _async_update_data(self) -> dict[str, dict]:
-        """首次拉取:全量设备列表 + 各设备状态快照。"""
+        client.add_listener(self._on_ws_message)
+
+    # ==================== 生命周期 ====================
+    async def async_start(self) -> None:
+        """启动 WS 后台任务。首次数据拉取由 config_entry_first_refresh 负责。"""
+        if self._ws_task is None:
+            self._ws_task = self.entry.async_create_background_task(
+                self.hass, self._ws_loop(), f"{DOMAIN}_ws"
+            )
+
+    async def async_shutdown(self) -> None:
+        self._closing = True
+        if self._group_debounce_cancel is not None:
+            self._group_debounce_cancel()
+            self._group_debounce_cancel = None
+        if self._ws_task is not None:
+            self._ws_task.cancel()
+            self._ws_task = None
+        await self.client.async_ws_close()
+        await super().async_shutdown()
+
+    # ==================== 轮询 ====================
+    async def _async_update_data(self) -> dict[str, PeerState]:
         try:
-            devices = await self.client.get_devices()
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("拉取设备列表失败: %s", err)
-            return self.devices
+            peers = await self.client.async_get_peers()
+        except MusicFlowAuthError as err:
+            # 触发 HA 的重新认证流程,而不是一直刷失败日志
+            raise ConfigEntryAuthFailed(f"API Key 已失效: {err}") from err
+        except MusicFlowError as err:
+            raise UpdateFailed(str(err)) from err
 
-        for dev in devices:
-            dev_id = dev.get("id")
-            if not dev_id:
+        seen: set[str] = set()
+        for peer in peers:
+            peer_id = peer.get("peerId")
+            kind = peer.get("kind")
+            if not isinstance(peer_id, str) or not isinstance(kind, str):
+                continue
+            seen.add(peer_id)
+            state = self.peers.get(peer_id)
+            if state is None:
+                state = PeerState(peer_id=peer_id, kind=kind, name=peer.get("name") or peer_id)
+                self.peers[peer_id] = state
+            state.apply_peer(peer)
+
+        # group peer 会被后端整个删掉(removeGroup),这里同步移除
+        for peer_id in list(self.peers):
+            if peer_id not in seen:
+                self.peers.pop(peer_id, None)
+
+        await self._async_refresh_groups_index()
+
+        # 只拉可控且在线的 peer 状态,离线设备拉状态会白等超时
+        targets = [
+            p for p in self.peers.values() if p.controllable and p.available
+        ]
+        if targets:
+            results = await asyncio.gather(
+                *(self.client.async_get_peer_status(p.peer_id) for p in targets),
+                return_exceptions=True,
+            )
+            for peer_state, result in zip(targets, results):
+                if isinstance(result, dict):
+                    peer_state.apply_status(result)
+                elif isinstance(result, Exception):
+                    _LOGGER.debug("拉取 %s 状态失败: %s", peer_state.peer_id, result)
+
+        return self.peers
+
+    async def _async_refresh_groups_index(self) -> None:
+        """重建 device → groups 索引。组变动不频繁,跟着轮询走即可。"""
+        if not any(p.kind == PEER_KIND_GROUP for p in self.peers.values()):
+            self._device_groups = {}
+            return
+        try:
+            data = await self.client.async_get_groups()
+        except MusicFlowError as err:
+            _LOGGER.debug("拉取组列表失败: %s", err)
+            return
+        index: dict[str, set[str]] = {}
+        for group in data:
+            group_id = group.get("id")
+            if not isinstance(group_id, str):
+                continue
+            for member in group.get("memberIds") or []:
+                if isinstance(member, str):
+                    index.setdefault(member, set()).add(group_id)
+        self._device_groups = index
+
+    # ==================== WebSocket ====================
+    async def _ws_loop(self) -> None:
+        """连接 → 监听 → 断线退避重连,直到集成卸载。"""
+        delay = WS_RECONNECT_MIN
+        while not self._closing:
+            try:
+                await self.client.async_ws_connect()
+                self._ws_connected = True
+                delay = WS_RECONNECT_MIN
+                _LOGGER.debug("MusicFlow WebSocket 已连接")
+                # 重连后立刻全量对齐一次,补上断线期间漏掉的事件
+                await self.async_request_refresh()
+                await self.client.async_ws_listen()
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001 - 任何异常都要能重连
+                _LOGGER.debug("MusicFlow WebSocket 异常: %s", err)
+            finally:
+                self._ws_connected = False
+                await self.client.async_ws_close()
+            if self._closing:
+                break
+            _LOGGER.debug("MusicFlow WebSocket %.0fs 后重连", delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, WS_RECONNECT_MAX)
+
+    @property
+    def ws_connected(self) -> bool:
+        return self._ws_connected
+
+    @callback
+    def _on_ws_message(self, msg: dict[str, Any]) -> None:
+        """WS 消息分发。运行在事件循环里,只做内存更新 + 通知实体。"""
+        msg_type = msg.get("type")
+        changed = False
+
+        if msg_type == "peer_snapshot":
+            changed = self._apply_peer_snapshot(msg.get("peers") or [])
+        elif msg_type in ("peer_registered", "peer_available", "peer_unavailable"):
+            changed = self._apply_peer(msg.get("peer"))
+        elif msg_type == "peer_queue_changed":
+            changed = self._apply_queue(msg.get("peer_id"), msg.get("queue"))
+        elif msg_type == "peer_queue_cleared":
+            changed = self._apply_queue(
+                msg.get("peer_id"),
+                {"items": [], "currentIndex": -1, "isActive": False, "ended": False},
+            )
+        elif msg_type == "snapshot":
+            changed = self._apply_device_snapshot(msg.get("devices") or {})
+        elif msg_type == "player_state_changed":
+            changed = self._apply_device_status(msg.get("device_id"), msg.get("state"))
+        elif msg_type == "media_changed":
+            media = msg.get("media")
+            changed = self._apply_device_status(
+                msg.get("device_id"), {"media": media} if media else None
+            )
+        elif msg_type == "queue_changed":
+            # QueueController 的 key 对 dlna 是 deviceId、对 group 是 groupId,
+            # 事件字段统一叫 device_id,所以两个命名空间都试一下。
+            raw_id = msg.get("device_id")
+            queue = msg.get("queue")
+            changed = any(
+                (
+                    self._apply_queue(f"{PEER_KIND_DLNA}:{raw_id}", queue, strict=True),
+                    self._apply_queue(f"{PEER_KIND_GROUP}:{raw_id}", queue, strict=True),
+                )
+            )
+        elif msg_type in ("device_list_changed", "group_changed", "group_deleted"):
+            # 设备/组增删 → 需要重新拉 peer 列表来建/删实体
+            self.hass.async_create_task(self.async_request_refresh())
+            return
+
+        if changed:
+            self.async_update_listeners()
+
+    @callback
+    def _apply_peer_snapshot(self, peers: list[Any]) -> bool:
+        seen: set[str] = set()
+        for peer in peers:
+            if not isinstance(peer, dict):
+                continue
+            peer_id = peer.get("peerId")
+            kind = peer.get("kind")
+            if not isinstance(peer_id, str) or not isinstance(kind, str):
+                continue
+            seen.add(peer_id)
+            state = self.peers.get(peer_id)
+            if state is None:
+                state = PeerState(peer_id=peer_id, kind=kind, name=peer.get("name") or peer_id)
+                self.peers[peer_id] = state
+            state.apply_peer(peer)
+        for peer_id in list(self.peers):
+            if peer_id not in seen:
+                self.peers.pop(peer_id, None)
+        return True
+
+    @callback
+    def _apply_peer(self, peer: Any) -> bool:
+        if not isinstance(peer, dict):
+            return False
+        peer_id = peer.get("peerId")
+        kind = peer.get("kind")
+        if not isinstance(peer_id, str) or not isinstance(kind, str):
+            return False
+        state = self.peers.get(peer_id)
+        if state is None:
+            state = PeerState(peer_id=peer_id, kind=kind, name=peer.get("name") or peer_id)
+            self.peers[peer_id] = state
+            # 新 peer:让平台侧有机会补建实体
+            self.hass.async_create_task(self.async_request_refresh())
+        state.apply_peer(peer)
+        return True
+
+    @callback
+    def _apply_queue(self, peer_id: Any, queue: Any, *, strict: bool = False) -> bool:
+        if not isinstance(peer_id, str) or not isinstance(queue, dict):
+            return False
+        state = self.peers.get(peer_id)
+        if state is None:
+            # strict=True 用于 queue_changed 的双命名空间试探,命不中属正常
+            return False
+        merged = dict(state.queue)
+        merged.update(queue)
+        state.queue = merged
+        return True
+
+    @callback
+    def _apply_device_snapshot(self, devices: dict[str, Any]) -> bool:
+        changed = False
+        for device_id, status in devices.items():
+            if isinstance(status, dict) and self._apply_device_status(device_id, status):
+                changed = True
+        return changed
+
+    @callback
+    def _apply_device_status(self, device_id: Any, status: Any) -> bool:
+        if not isinstance(device_id, str) or not isinstance(status, dict):
+            return False
+        state = self.peers.get(f"{PEER_KIND_DLNA}:{device_id}")
+        if state is None:
+            return False
+        state.apply_status(status)
+        # 该设备若属于某些组,组状态派生自 leader,防抖补一次组状态
+        groups = self._device_groups.get(device_id)
+        if groups:
+            self._schedule_group_refresh(groups)
+        return True
+
+    @callback
+    def _schedule_group_refresh(self, group_ids: set[str]) -> None:
+        self._pending_groups |= group_ids
+        if self._group_debounce_cancel is not None:
+            self._group_debounce_cancel()
+        self._group_debounce_cancel = async_call_later(
+            self.hass, GROUP_REFRESH_DEBOUNCE, self._run_group_refresh
+        )
+
+    @callback
+    def _run_group_refresh(self, _now: Any) -> None:
+        self._group_debounce_cancel = None
+        group_ids = self._pending_groups
+        self._pending_groups = set()
+        if group_ids:
+            self.hass.async_create_task(self._async_refresh_group_status(group_ids))
+
+    async def _async_refresh_group_status(self, group_ids: set[str]) -> None:
+        updated = False
+        for group_id in group_ids:
+            peer_id = f"{PEER_KIND_GROUP}:{group_id}"
+            state = self.peers.get(peer_id)
+            if state is None or not state.available:
                 continue
             try:
-                status = await self.client.get_device_status(dev_id)
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("拉取设备 %s 状态失败: %s", dev_id, err)
-                status = {"state": "STOPPED", "position": 0, "duration": 0, "volume": 0}
-            status["name"] = dev.get("name") or dev.get("friendlyName") or dev_id
-            status["available"] = dev.get("available", True)
-            self.devices[dev_id] = status
-            self._known_device_ids.add(dev_id)
-        return self.devices
+                status = await self.client.async_get_peer_status(peer_id)
+            except MusicFlowError as err:
+                _LOGGER.debug("拉取组 %s 状态失败: %s", group_id, err)
+                continue
+            if status:
+                state.apply_status(status)
+                updated = True
+        if updated:
+            self.async_update_listeners()
 
-    async def start_listening(self) -> None:
-        """连接 WS 并注册事件回调。"""
-        self.client.add_listener(self._on_ws_message)
-        self._reconnect_task = asyncio.create_task(self._maintain_connection())
+    # ==================== 便捷访问 ====================
+    def controllable_peers(self) -> list[PeerState]:
+        return [p for p in self.peers.values() if p.controllable]
 
-    async def _maintain_connection(self) -> None:
-        """维持 WS 连接,断开后自动重连。"""
-        while True:
-            try:
-                await self.client.connect_ws()
-                # connect_ws 内部启动了监听任务,阻塞等待它结束(即断开)
-                while self.client._ws and not self.client._ws.closed:
-                    await asyncio.sleep(5)
-            except asyncio.CancelledError:
-                break
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("WS 连接异常,%ds 后重连: %s", WS_RECONNECT_DELAY, err)
-            await asyncio.sleep(WS_RECONNECT_DELAY)
-
-    def _on_ws_message(self, msg: dict) -> None:
-        """WS 事件回调:更新本地状态,触发实体刷新。"""
-        msg_type = msg.get("type")
-        device_id = msg.get("device_id")
-
-        if msg_type == "snapshot":
-            # 初始全量快照:devices 是 { deviceId: status, ... }
-            snapshot_devices = msg.get("devices", {}) or {}
-            for dev_id, status in snapshot_devices.items():
-                self.devices[dev_id] = status
-                self._known_device_ids.add(dev_id)
-        elif msg_type == "player_state_changed" and device_id:
-            existing = self.devices.get(device_id, {})
-            existing.update(msg.get("state", {}))
-            self.devices[device_id] = existing
-            self._known_device_ids.add(device_id)
-        elif msg_type == "media_changed" and device_id:
-            existing = self.devices.get(device_id, {})
-            existing["media"] = msg.get("media", {})
-            self.devices[device_id] = existing
-        elif msg_type == "queue_changed" and device_id:
-            self.queues[device_id] = msg.get("queue", {})
-        elif msg_type == "device_list_changed":
-            # 设备增删:触发实体平台重新加载(简单实现:仅刷新)
-            asyncio.create_task(self._refresh_devices())
-            return
-
-        self.async_update_listeners()
-
-    async def _refresh_devices(self) -> None:
-        """设备列表变化时重新拉取。"""
-        try:
-            devices = await self.client.get_devices()
-        except Exception:  # noqa: BLE001
-            return
-        for dev in devices:
-            dev_id = dev.get("id")
-            if dev_id and dev_id not in self._known_device_ids:
-                self._known_device_ids.add(dev_id)
-        self.async_update_listeners()
-
-    async def shutdown(self) -> None:
-        if self._reconnect_task:
-            self._reconnect_task.cancel()
-            try:
-                await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
-        await self.client.disconnect()
+    def get_peer(self, peer_id: str) -> PeerState | None:
+        return self.peers.get(peer_id)
