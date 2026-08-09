@@ -466,14 +466,18 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         await self._call(self.coordinator.client.async_set_mute(self.peer_id, mute))
 
     async def async_turn_off(self) -> None:
-        """软关机:停播 + 状态置 OFF。
+        """关闭:停止播放并清空播放列表。
 
-        DLNA 渲染器没有标准的电源开关(UPnP 没这个动作),所以这里给的是"让它
-        闭嘴"的语义。设备再次出声时状态会自动恢复。
+        等价于服务器上"清空该播放器的队列"——停掉当前曲目后,把队列整个
+        清空(用户点关闭就是想让这台设备彻底安静、队列不再保留)。先 stop
+        再 clear:stop 会先冻结队列自动推进(tracker),避免 STOPPED 事件
+        被误判成"这首放完了"而去播下一首。DLNA 渲染器没有标准电源开关,
+        因此没有真实断电,再次播放时队列是干净的。
         """
         self._soft_off = True
         self.async_write_ha_state()
         await self._call(self.coordinator.client.async_stop(self._control_peer_id))
+        await self._call(self.coordinator.client.async_clear_queue(self._control_peer_id))
 
     async def async_turn_on(self) -> None:
         self._soft_off = False
