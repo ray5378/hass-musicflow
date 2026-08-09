@@ -1,77 +1,160 @@
-# MusicFlow Home Assistant Integration
+# MusicFlow for Home Assistant
 
-将 [MusicFlow](https://github.com/ray5378/MusicFlow) 音乐服务器接入 Home Assistant 的自定义集成。
+[![HACS Custom][hacs-badge]][hacs-link]
+[![Release][release-badge]][release-link]
+[![Home Assistant][ha-badge]][ha-link]
 
-## 功能
+Home Assistant custom integration for [MusicFlow][musicflow], a self-hosted music
+library server with DLNA / UPnP playback and multi-room sync groups.
 
-- **媒体播放器实体**:MusicFlow 里每个 **DLNA 设备**和每个**播放组**各对应一个 HA `media_player` 实体
-- **实时状态**:通过 WebSocket 长连接推送播放状态,断线自动重连;另有 30s 轮询兜底
-- **媒体浏览**:在 HA 媒体浏览器中浏览 **歌单 / 专辑 / 艺术家 / 流派**,带封面
-- **播放控制**:play / pause / stop / next / previous / seek / volume / 音量步进 / 循环 / 随机 / 清空队列
-- **点播播放**:单曲、整张专辑、歌单、艺术家、流派,支持追加入队
-- **Zeroconf 自动发现**:MusicFlow 后端广播后,HA 自动发现并提示配置;IP 变化会自动更新
-- **凭据失效自动重认证**:API Key 失效时 HA 会弹出重新认证流程
+Every DLNA renderer and every sync group managed by MusicFlow becomes a native
+Home Assistant `media_player` entity, with real-time state over WebSocket.
 
-## 安装
+> Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 
-### 方式 A:通过 HACS(推荐)
+[![Open your Home Assistant instance and open this repository inside HACS.][my-badge]][my-link]
 
-1. 安装 [HACS](https://hacs.xyz/)
-2. HACS → 右上角 **⋮ → 自定义仓库**
-3. 填入:`https://github.com/ray5378/hass-musicflow`,类别选 **Integration**
-4. 搜索 **MusicFlow** → 下载
-5. **重启 Home Assistant**
-6. 设置 → 设备与服务 → 添加集成 → **MusicFlow**
+---
 
-### 方式 B:手动安装
+## Highlights
 
-将 `custom_components/musicflow/` 复制到 HA 的 `config/custom_components/musicflow/`,然后重启 HA。
-
-## 配置
-
-### 先拿到 API Key
-
-集成用 API Key 作长期凭据(登录 Token 24 小时过期,不适合常驻客户端)。两个入口任选:
-
-- **给自己**:MusicFlow Web UI → **设置** → **API Key** → **生成** → **复制**
-- **给指定用户**(管理员):**管理 → 用户管理** → 对应用户卡片 → **API Key** → **生成** → **复制**
-
-建议单独建一个 `homeassistant` 账号发 Key,这样撤销时不影响自己日常登录。
-
-> 改密码会自动使该用户的 Key 失效,所以请**先改密码再生成 Key**。
-
-### 再添加集成
-
-如果已运行 MusicFlow(加载项或独立 Docker),集成会通过 Zeroconf 自动发现,地址自动填好,只需补 API Key。手动配置时填写:
-
-| 字段 | 说明 |
+| Capability | What you get |
 |---|---|
-| URL | MusicFlow 地址,如 `http://192.168.1.10:46400`(省略协议和端口时按 `http` / `46400` 补全) |
-| API Key | 上一步复制的 Key,形如 `mf_xxxxxxxx...` |
-| 校验 SSL 证书 | 仅在使用 https 且证书为自签名时取消勾选 |
+| Media player entities | One entity per DLNA device, one per sync group |
+| Real-time state | WebSocket push (`local_push`), auto-reconnect, 30s polling fallback |
+| Media library | Browse playlists / albums / artists / genres with cover art |
+| Search | In-library search from the media browser (HA 2025.5+) |
+| Media source | MusicFlow shows up in the global **Media** tab, playable on ANY HA player |
+| Grouping | Create and edit multi-room groups straight from the HA card |
+| Volume + mute | Independent per-device volume and mute, two-way synced |
+| Announce / TTS | Interrupt playback, speak, then resume the original track and position |
+| Source select | Move the current queue and playback position to another speaker |
+| Power | Soft power on/off for devices without a real power switch |
+| Cover art proxy | Artwork is proxied through HA, so it works from outside your LAN |
+| Zeroconf | Auto-discovery of the MusicFlow server, IP changes are picked up |
+| Re-auth | If the API key is revoked, HA prompts you to enter a new one |
 
-> 在 MusicFlow 里点「重新生成」或「撤销」会让旧 Key 立即失效,HA 侧会弹出重新认证提示,填入新 Key 即可。
+Home Assistant only acts as a remote control. Audio always streams directly from
+the MusicFlow backend to the DLNA device and never passes through HA.
 
-## 实体与设备
+---
 
-集成会注册一个网关设备(MusicFlow 服务端本身),每个播放器实体挂在它下面:
+## Requirements
 
-- **DLNA 设备** → `media_player.<设备名>`
-- **播放组** → `media_player.<组名>`,状态取自组内 leader 设备
+| Integration | MusicFlow server | Home Assistant |
+|---|---|---|
+| **1.2.0** | **1.1.7** or newer | 2024.12 or newer |
+| 1.1.x | 1.1.0 or newer | 2024.12 or newer |
 
-MusicFlow 里新增/移除设备或播放组时,实体会在下一次刷新时自动增补。
+Notes:
 
-## 服务
+- The in-library **search box** needs Home Assistant **2025.5** or newer. On older
+  cores everything else still works, only the search field is hidden.
+- Mute, announce (TTS), source select and the richer track metadata need
+  MusicFlow server **1.1.7** or newer.
+- Not sure which server version you run? Open `http://<musicflow-host>/ping`.
+  It returns `{"status":"ok","version":"1.1.7"}`.
 
-除标准 `media_player.*` 服务外,还提供三个专用服务:
+This integration pulls in **no extra Python dependencies**. The WebSocket client
+reuses the aiohttp session that Home Assistant already ships.
 
-| 服务 | 说明 |
+---
+
+## Installation
+
+### Option A - HACS (recommended)
+
+1. Install [HACS](https://hacs.xyz/) if you do not have it yet.
+2. Open **HACS** and use the top-right menu -> **Custom repositories**.
+3. Add `https://github.com/ray5378/hass-musicflow` with category **Integration**.
+4. Search for **MusicFlow** and download it.
+5. **Restart Home Assistant.**
+6. Go to **Settings -> Devices & Services -> Add Integration -> MusicFlow**.
+
+Or just click the badge at the top of this page to jump straight there.
+
+### Option B - Manual
+
+Copy `custom_components/musicflow/` into your Home Assistant
+`config/custom_components/musicflow/` directory and restart Home Assistant.
+
+---
+
+## Configuration
+
+### 1. Create an API key
+
+The integration authenticates with an API key. Login tokens expire after 24
+hours, so they are not suitable for a long-lived client.
+
+- **For yourself:** MusicFlow web UI -> **Settings** -> **API Key** -> **Generate** -> **Copy**
+- **For another user (admin):** **Admin -> User management** -> pick the user ->
+  **API Key** -> **Generate** -> **Copy**
+
+Tip: create a dedicated `homeassistant` account and issue the key from there.
+Revoking it later will then not affect your own daily login.
+
+> Changing a user password invalidates that user's keys, so **change the password
+> first, then generate the key.**
+
+### 2. Add the integration
+
+If MusicFlow is already running on the same network (add-on or standalone Docker),
+Zeroconf discovery fills in the address for you and you only need the API key.
+
+When configuring manually:
+
+| Field | Description |
 |---|---|
-| `musicflow.play_content` | 按内容类型播放(song / album / playlist / artist / genre),可指定起始位置、播放模式、是否追加 |
-| `musicflow.set_play_mode` | 设置播放模式:`order` 顺序 / `shuffle` 随机 / `one` 单曲循环 / `all` 列表循环 |
-| `musicflow.clear_queue` | 清空播放队列 |
+| URL | MusicFlow address, e.g. `http://192.168.1.10:46400`. Missing scheme/port default to `http` and `46400`. |
+| API Key | The key you copied, it looks like `mf_xxxxxxxx...` |
+| Verify SSL certificate | Only uncheck this when using https with a self-signed certificate |
 
-示例:
+If you regenerate or revoke the key in MusicFlow, the old one stops working
+immediately and Home Assistant raises a re-authentication prompt.
+
+---
+
+## Entities and devices
+
+The integration registers one gateway device (the MusicFlow server itself) and
+attaches every player entity to it:
+
+- **DLNA device** -> `media_player.<device_name>`
+- **Sync group** -> `media_player.<group_name>`, state derived from the group leader
+
+Adding or removing devices and groups in MusicFlow is picked up automatically on
+the next refresh, no restart required.
+
+### Grouping and multi-room
+
+Group entities behave like Sonos groups:
+
+- The group entity is listed first in `group_members` and acts as the leader.
+- Joining a member forwards its transport controls to `group:<id>`, so play,
+  pause and queue operations affect the whole group.
+- Volume stays **per device**, so you can still balance individual speakers.
+- Using the HA card's grouping UI creates, edits or dissolves the matching
+  MusicFlow sync group on the server.
+
+### Media source
+
+Because the integration registers a media source, your MusicFlow library also
+appears under the global **Media** tab. From there you can send a track to
+**any** Home Assistant player, not just MusicFlow entities. Direct stream links
+are authenticated with the same API key.
+
+---
+
+## Services
+
+Standard `media_player.*` services all work. Three extra services are provided:
+
+| Service | Description |
+|---|---|
+| `musicflow.play_content` | Play by content type (song / album / playlist / artist / genre), with optional start index, play mode and enqueue |
+| `musicflow.set_play_mode` | Set play mode: `order`, `shuffle`, `one` (repeat one), `all` (repeat all) |
+| `musicflow.clear_queue` | Clear the playback queue |
 
 ```yaml
 service: musicflow.play_content
@@ -83,49 +166,96 @@ data:
   play_mode: shuffle
 ```
 
-## media_content_id 格式
+### Announce / TTS
 
-自动化调用 `media_player.play_media` 时支持:
+`announce: true` interrupts the current track, plays the message, then resumes
+the original track at the original position.
 
-| URI | 行为 |
+```yaml
+service: media_player.play_media
+target:
+  entity_id: media_player.living_room_speaker
+data:
+  media_content_id: media-source://tts/tts.google_translate_say?message=Dinner+is+ready
+  media_content_type: music
+  announce: true
+  extra:
+    volume: 0.6
+```
+
+---
+
+## media_content_id formats
+
+When calling `media_player.play_media` from an automation:
+
+| URI | Behaviour |
 |---|---|
-| `musicflow://song/<id>` | 播放单曲 |
-| `musicflow://album/<id>` | 整张专辑入队播放 |
-| `musicflow://playlist/<id>` | 歌单入队播放 |
-| `musicflow://artist/<id>` | 艺术家全部曲目入队播放 |
-| `musicflow://genre/<名称>` | 该流派曲目入队播放 |
+| `musicflow://song/<id>` | Play a single track |
+| `musicflow://album/<id>` | Queue and play a whole album |
+| `musicflow://playlist/<id>` | Queue and play a playlist |
+| `musicflow://artist/<id>` | Queue and play every track by the artist |
+| `musicflow://genre/<name>` | Queue and play every track in the genre |
 
-也可以直接用 `media_content_type: playlist` + `media_content_id: "12"` 这种形式。
-带 `enqueue: add` 参数时为追加到队列尾部而非立即替换。
+The shorter form `media_content_type: playlist` + `media_content_id: "12"` also
+works. Pass `enqueue: add` to append to the queue instead of replacing it.
 
-## 架构
+---
+
+## Architecture
 
 ```
-HA 仪表盘 (控制面)
-  └─ media_player.<peer>
-       └─ 集成 (Python, 本仓库)
-            ├─ REST  → /rest/api/v1/...   (peer 状态 / 队列 / 播放控制)
-            ├─ REST  → /rest/...          (OpenSubsonic 曲库浏览与封面)
-            └─ WS    ← /ws                (播放状态实时推送)
-                          └─ SOAP → DLNA 设备 (真正发声)
+HA dashboard (control plane)
+  |
+  +-- media_player.<peer>
+        |
+        +-- this integration (Python)
+              |
+              +-- REST  -> /rest/api/v1/...  peer state, queue, transport control
+              +-- REST  -> /rest/...         OpenSubsonic browsing and cover art
+              +-- WS    <- /ws               real-time playback state push
+                              |
+                              +-- SOAP -> DLNA device (actual audio output)
 ```
 
-HA 只充当**远程控制器**,音频流始终在 MusicFlow 后端 ↔ DLNA 设备之间,不经过 HA。
+---
 
-## 版本要求
+## Troubleshooting
 
-- Home Assistant **2024.12.0** 及以上
-- MusicFlow 服务端 **v1.0.4** 及以上,推荐 **v1.0.5**
-  - v1.0.3 起 `/rest/api/v1/play` 支持 `song` 类型
-  - v1.0.4 起设置页才能生成 API Key(更早的版本没有生成入口,配置流程走不下去)
-  - v1.0.5 起用户管理页可为任意用户签发 Key,设置页也会显示服务端真实版本
+| Symptom | Fix |
+|---|---|
+| No entities after setup | Confirm MusicFlow has at least one online DLNA device or group |
+| Re-auth prompt keeps coming back | The API key was revoked or the password changed, generate a new key |
+| No cover art when away from home | Requires integration 1.2.0+, artwork is proxied through HA |
+| Search field missing | Requires Home Assistant 2025.5 or newer |
+| Mute / announce do nothing | Requires MusicFlow server 1.1.7 or newer |
+| Group controls missing | Requires integration 1.2.0+ |
 
-不确定自己跑的是哪个版本?打开 `http://<MusicFlow地址>/ping`,v1.0.5 起会返回
-`{"status":"ok","version":"1.0.5"}`;若 `version` 缺失或为 `1.0.0`,说明镜像还是旧的。
+Enable debug logging:
 
-集成不引入任何额外 Python 依赖,WebSocket 复用 HA 自带的 aiohttp。
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.musicflow: debug
+```
 
-## 相关仓库
+---
 
-- MusicFlow 服务端:https://github.com/ray5378/MusicFlow
-- HA 加载项仓库:https://github.com/ray5378/hassio-addons
+## Related repositories
+
+| Repository | Purpose |
+|---|---|
+| [MusicFlow][musicflow] | The music server itself (backend + web UI) |
+| [hassio-addons](https://github.com/ray5378/hassio-addons) | Home Assistant add-on, runs MusicFlow under Supervisor |
+| hass-musicflow (this repo) | The HACS custom integration |
+
+[musicflow]: https://github.com/ray5378/MusicFlow
+[hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg
+[hacs-link]: https://github.com/hacs/integration
+[release-badge]: https://img.shields.io/github/v/release/ray5378/hass-musicflow?display_name=tag
+[release-link]: https://github.com/ray5378/hass-musicflow/releases
+[ha-badge]: https://img.shields.io/badge/Home%20Assistant-2024.12%2B-41BDF5.svg
+[ha-link]: https://www.home-assistant.io/
+[my-badge]: https://my.home-assistant.io/badges/hacs_repository.svg
+[my-link]: https://my.home-assistant.io/redirect/hacs_repository/?owner=ray5378&repository=hass-musicflow&category=integration
