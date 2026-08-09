@@ -417,11 +417,17 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
     async def async_search_media(
         self,
         search_query: str,
+        *args,
         media_content_type: str | None = None,
         media_content_id: str | None = None,
         limit: int = 50,
+        **kwargs,
     ) -> BrowseMedia:
-        """HA 媒体浏览器搜索栏的落点:歌单/专辑/艺术家/歌曲统一搜索。"""
+        """HA 媒体浏览器搜索栏的落点:歌单/专辑/艺术家/歌曲统一搜索。
+
+        新版 HA 的 async_internal_search_media 会额外传入 media_filter_classes
+        等位置/关键字参数,这里用 *args/**kwargs 吞掉,只取 search_query。
+        """
         try:
             return await build_search_results(self.coordinator.client, search_query, limit)
         except MusicFlowError as err:

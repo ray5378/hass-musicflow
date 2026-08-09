@@ -21,6 +21,13 @@ from urllib.parse import quote, unquote
 
 from homeassistant.components.media_player import BrowseError, BrowseMedia, MediaClass, MediaType
 
+# 新版 HA(约 2024.x+) 的 async_search_media 需返回 SearchMedia(result=[...]),
+# 旧版返回 BrowseMedia 根节点即可。这里做兼容导入。
+try:
+    from homeassistant.components.media_player import SearchMedia
+except ImportError:  # pragma: no cover - 旧版 HA 没有 SearchMedia
+    SearchMedia = None
+
 from .api import MusicFlowClient
 from .const import BROWSE_LIMIT, MEDIA_URI_PREFIX
 
@@ -320,11 +327,14 @@ def _playlist_node(client: MusicFlowClient, playlist: dict) -> BrowseMedia:
 
 async def build_search_results(
     client: MusicFlowClient, query: str, limit: int = 30
-) -> BrowseMedia:
-    """把 search3 的结果拼成一个可浏览的搜索结果树。
+) -> BrowseMedia | "SearchMedia":
+    """把 search3 的结果拼成一个可浏览的搜索结果。
 
     search3 返回 artist/album/song;歌单不在结果里,这里单独拉取并按名称过滤。
     专辑/艺术家/歌单可继续展开(点击后走既有 browse 路径),歌曲可直接播放。
+
+    新版 HA 要求 async_search_media 返回 SearchMedia(result=[...BrowseMedia]),
+    旧版则返回 BrowseMedia 根节点 —— 此处按可用类做兼容。
     """
     resp = await client.async_search(query, count=limit)
     result = resp.get("searchResult3", resp)
@@ -358,6 +368,11 @@ async def build_search_results(
             )
         ]
 
+    if SearchMedia is not None:
+        # 新版 HA: 搜索结果必须是 SearchMedia(result=[...])
+        return SearchMedia(result=children)
+
+    # 旧版 HA 兼容: 返回包裹的根节点
     return BrowseMedia(
         title=f"搜索: {query}",
         media_class=MediaClass.DIRECTORY,
