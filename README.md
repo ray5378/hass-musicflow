@@ -249,6 +249,7 @@ logger:
 | [MusicFlow][musicflow] | The music server itself (backend + web UI) |
 | [hassio-addons](https://github.com/ray5378/hassio-addons) | Home Assistant add-on, runs MusicFlow under Supervisor |
 | hass-musicflow (this repo) | The HACS custom integration |
+| [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card) | Lovelace card: favorite, add-to-playlist, scrolling lyrics, output switch (needs integration 1.2.6+) |
 
 ## License
 

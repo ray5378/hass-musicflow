@@ -226,6 +226,7 @@ logger:
 | [MusicFlow](https://github.com/ray5378/MusicFlow) | 音乐服务端本体（后端 + Web UI） |
 | [hassio-addons](https://github.com/ray5378/hassio-addons) | HA 加载项，把 MusicFlow 跑在 Supervisor 下 |
 | hass-musicflow（本仓库） | HACS 自定义集成 |
+| [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card) | Lovelace 卡片：喜欢 / 添加到歌单 / 滚动歌词 / 切换输出设备（需集成 1.2.6+） |
 
 ## 许可证
 
