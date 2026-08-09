@@ -250,6 +250,10 @@ logger:
 | [hassio-addons](https://github.com/ray5378/hassio-addons) | Home Assistant add-on, runs MusicFlow under Supervisor |
 | hass-musicflow (this repo) | The HACS custom integration |
 
+## License
+
+Released under the [MIT License](LICENSE).
+
 [musicflow]: https://github.com/ray5378/MusicFlow
 [hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg
 [hacs-link]: https://github.com/hacs/integration

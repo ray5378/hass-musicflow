@@ -226,5 +226,9 @@ logger:
 | [hassio-addons](https://github.com/ray5378/hassio-addons) | HA 加载项，把 MusicFlow 跑在 Supervisor 下 |
 | hass-musicflow（本仓库） | HACS 自定义集成 |
 
+## 许可证
+
+基于 [MIT License](LICENSE) 发布。
+
 [my-badge]: https://my.home-assistant.io/badges/hacs_repository.svg
 [my-link]: https://my.home-assistant.io/redirect/hacs_repository/?owner=ray5378&repository=hass-musicflow&category=integration

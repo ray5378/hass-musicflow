@@ -53,7 +53,7 @@ jobs:
           import importlib
           import homeassistant.const as hc
 
-          print("Home Assistant:", importlib.import_module("homeassistant").__version__)
+          print("Home Assistant:", hc.__version__)
 
           modules = [
               "const",
