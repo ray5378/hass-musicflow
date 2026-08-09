@@ -28,6 +28,8 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
     MediaType,
     RepeatMode,
+    SearchMedia,
+    SearchMediaQuery,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -825,22 +827,17 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             raise HomeAssistantError(f"浏览曲库失败: {err}") from err
 
     async def async_search_media(
-        self,
-        search_query: str,
-        *args,
-        media_content_type: str | None = None,
-        media_content_id: str | None = None,
-        limit: int = 50,
-        **kwargs,
-    ) -> BrowseMedia:
+        self, query: SearchMediaQuery, *args, **kwargs
+    ) -> SearchMedia:
         """HA 媒体浏览器搜索栏的落点:歌单/专辑/艺术家/歌曲统一搜索。
 
-        新版 HA 的 async_internal_search_media 会额外传入 media_filter_classes
-        等位置/关键字参数,这里用 *args/**kwargs 吞掉,只取 search_query。
+        2025.5+ 协议:HA 以 `query=SearchMediaQuery(...)` 关键字调用,要求返回
+        `SearchMedia(result=[...BrowseMedia])`。旧的 str 形式仅作防御保留。
         """
+        search_query = query.search_query if not isinstance(query, str) else query
         try:
             return await build_search_results(
-                self.coordinator.client, search_query, limit, thumb=self._thumbnail
+                self.coordinator.client, search_query, 50, thumb=self._thumbnail
             )
         except MusicFlowError as err:
             raise HomeAssistantError(f"搜索失败: {err}") from err

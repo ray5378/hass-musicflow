@@ -24,7 +24,13 @@ from __future__ import annotations
 import logging
 from urllib.parse import quote, unquote
 
-from homeassistant.components.media_player import BrowseError, MediaClass, MediaType
+from homeassistant.components.media_player import (
+    BrowseError,
+    MediaClass,
+    MediaType,
+    SearchMedia,
+    SearchMediaQuery,
+)
 from homeassistant.components.media_source import (
     BrowseMediaSource,
     MediaSource,
@@ -35,7 +41,7 @@ from homeassistant.components.media_source import (
 from homeassistant.core import HomeAssistant
 
 from .api import MusicFlowClient, MusicFlowError
-from .browse_media import _as_list, _join
+from .browse_media import _as_list, _join, build_search_results
 from .const import BROWSE_LIMIT, DOMAIN
 from .coordinator import MusicFlowCoordinator
 
@@ -144,6 +150,19 @@ class MusicFlowMediaSource(MediaSource):
             raise BrowseError(f"浏览 MusicFlow 曲库失败: {err}") from err
 
         raise BrowseError(f"无法浏览 {identifier}")
+
+    # ==================== 搜索 ====================
+    async def async_search_media(
+        self, item: MediaSourceItem, query: SearchMediaQuery
+    ) -> SearchMedia:
+        """媒体标签页内搜索:歌单/专辑/艺术家/歌曲统一搜索。"""
+        client = self._client(item.identifier.partition("/")[0])
+        try:
+            return await build_search_results(
+                client, query.search_query, 50
+            )
+        except MusicFlowError as err:
+            raise BrowseError(f"搜索 MusicFlow 曲库失败: {err}") from err
 
     # ---- 各层级 ----
     def _servers(self, entries: dict[str, MusicFlowCoordinator]) -> BrowseMediaSource:
