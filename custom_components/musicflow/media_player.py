@@ -20,7 +20,6 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components.media_player import (
-    DOMAIN as MEDIA_PLAYER_DOMAIN,
     BrowseMedia,
     MediaPlayerEnqueue,
     MediaPlayerEntity,
@@ -37,7 +36,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     config_validation as cv,
     entity_platform,
-    entity_registry as er,
 )
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -51,7 +49,6 @@ from .const import (
     ATTR_ENQUEUE,
     ATTR_PLAY_MODE,
     ATTR_START_INDEX,
-    AUTO_GROUP_SUFFIX,
     DOMAIN,
     MEDIA_URI_PREFIX,
     PEER_KIND_DLNA,
@@ -106,7 +103,6 @@ SUPPORTED_FEATURES = (
     | MediaPlayerEntityFeature.REPEAT_SET
     | MediaPlayerEntityFeature.SHUFFLE_SET
     | MediaPlayerEntityFeature.CLEAR_PLAYLIST
-    | MediaPlayerEntityFeature.GROUPING
     | MediaPlayerEntityFeature.SELECT_SOURCE
     | MediaPlayerEntityFeature.TURN_ON
     | MediaPlayerEntityFeature.TURN_OFF
@@ -202,16 +198,6 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
     def _status(self) -> dict[str, Any]:
         peer = self._peer
         return peer.status if peer else {}
-
-    @property
-    def _group_id(self) -> str | None:
-        """本实体在 HA 分组里归属的 MusicFlow 组 id(没入组则为 None)。"""
-        peer = self._peer
-        if peer is None:
-            return None
-        if peer.kind == PEER_KIND_GROUP:
-            return peer.raw_id
-        return self.coordinator.primary_group_of_device(peer.raw_id)
 
     @property
     def _control_peer_id(self) -> str:
@@ -659,137 +645,6 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
                 await client.async_pause(target_peer_id)
         except MusicFlowError as err:
             raise HomeAssistantError(f"转移播放失败: {err}") from err
-
-    # ==================== 分组(GROUPING)====================
-    def _entity_id_for_peer(self, peer_id: str) -> str | None:
-        registry = er.async_get(self.hass)
-        return registry.async_get_entity_id(
-            MEDIA_PLAYER_DOMAIN, DOMAIN, f"{self._entry.entry_id}_{peer_id}"
-        )
-
-    def _peer_id_for_entity(self, entity_id: str) -> str | None:
-        registry = er.async_get(self.hass)
-        entry = registry.async_get(entity_id)
-        if entry is None or entry.platform != DOMAIN:
-            return None
-        if entry.config_entry_id != self._entry.entry_id:
-            return None
-        prefix = f"{self._entry.entry_id}_"
-        if not entry.unique_id.startswith(prefix):
-            return None
-        return entry.unique_id[len(prefix) :]
-
-    def _device_ids_from_entities(self, entity_ids: list[str]) -> list[str]:
-        """把 HA 实体列表翻译成 MusicFlow 的裸 deviceId(组会被展开成成员)。"""
-        devices: list[str] = []
-        for entity_id in entity_ids:
-            peer_id = self._peer_id_for_entity(entity_id)
-            if peer_id is None:
-                raise HomeAssistantError(
-                    f"{entity_id} 不属于这台 MusicFlow 服务器,无法加入同一个组"
-                )
-            kind, _, raw = peer_id.partition(":")
-            if kind == PEER_KIND_DLNA:
-                candidates = [raw]
-            elif kind == PEER_KIND_GROUP:
-                candidates = self.coordinator.group_member_ids(raw)
-            else:
-                raise HomeAssistantError(f"{entity_id} 不能作为分组成员")
-            devices.extend(d for d in candidates if d not in devices)
-        return devices
-
-    @property
-    def group_members(self) -> list[str] | None:
-        """同一个 MusicFlow 组里的所有播放器实体。
-
-        HA 约定首位是 leader。MusicFlow 的组本身就是一个播放器实体(它才是真正
-        持队列、驱动全组的那个),所以把组实体排在最前,后面跟成员设备。
-        """
-        if self._peer is None:
-            return None
-        group_id = self._group_id
-        if not group_id:
-            return []
-        members = [
-            entity_id
-            for device_id in self.coordinator.group_member_ids(group_id)
-            if (entity_id := self._entity_id_for_peer(f"{PEER_KIND_DLNA}:{device_id}"))
-        ]
-        if not members:
-            return []
-        group_entity = self._entity_id_for_peer(f"{PEER_KIND_GROUP}:{group_id}")
-        if group_entity:
-            return [group_entity, *(e for e in members if e != group_entity)]
-        return members
-
-    async def async_join_players(self, group_members: list[str]) -> None:
-        """把其他播放器并进本播放器所在的组(没有组就现建一个)。"""
-        peer = self._peer
-        if peer is None:
-            raise HomeAssistantError("播放器不可用")
-        targets = self._device_ids_from_entities(group_members)
-        client = self.coordinator.client
-        group_id = self._group_id
-
-        if group_id:
-            merged = self.coordinator.group_member_ids(group_id)
-            if peer.kind == PEER_KIND_DLNA and peer.raw_id not in merged:
-                merged.append(peer.raw_id)
-            merged.extend(d for d in targets if d not in merged)
-            # 后端 PUT /v1/groups/:id 会给新加入的成员 cast 当前曲并对齐进度
-            await self._call(client.async_set_group_members(group_id, merged))
-            return
-
-        members = [peer.raw_id] + [d for d in targets if d != peer.raw_id]
-        if len(members) < 2:
-            raise HomeAssistantError("分组至少需要两台设备")
-        # 建组会新增一个 `group:<id>` 播放器实体,原来在本机放的内容要跟着搬过去,
-        # 否则建完组会出现"组是空的、歌还在单机上放"的割裂状态。
-        snapshot = self._playback_snapshot()
-        try:
-            group = await client.async_create_group(
-                f"{peer.name}{AUTO_GROUP_SUFFIX}", members
-            )
-        except MusicFlowError as err:
-            raise HomeAssistantError(f"创建播放器组失败: {err}") from err
-        group_id = group.get("id")
-        if group_id and snapshot:
-            await self._transfer_playback(
-                f"{PEER_KIND_GROUP}:{group_id}",
-                snapshot,
-                source_peer_id=self.peer_id,
-                # 源设备本身也是新组的成员,停它会把刚 cast 过去的组播一起掐掉
-                stop_source=False,
-            )
-        await self.coordinator.async_request_refresh()
-
-    async def async_unjoin_player(self) -> None:
-        """退组。对组实体本身调用则解散整个组。"""
-        peer = self._peer
-        if peer is None:
-            raise HomeAssistantError("播放器不可用")
-        client = self.coordinator.client
-
-        if peer.kind == PEER_KIND_GROUP:
-            await self._call(client.async_delete_group(peer.raw_id))
-            return
-
-        group_id = self.coordinator.primary_group_of_device(peer.raw_id)
-        if not group_id:
-            return
-        remaining = [
-            d for d in self.coordinator.group_member_ids(group_id) if d != peer.raw_id
-        ]
-        try:
-            if remaining:
-                await client.async_set_group_members(group_id, remaining)
-            else:
-                await client.async_delete_group(group_id)
-            # 离队的设备还在放着组里最后 cast 过去的那首,得让它停下来
-            await client.async_stop(self.peer_id)
-        except MusicFlowError as err:
-            raise HomeAssistantError(f"退出播放器组失败: {err}") from err
-        await self.coordinator.async_request_refresh()
 
     # ==================== 媒体浏览 ====================
     def _thumbnail(

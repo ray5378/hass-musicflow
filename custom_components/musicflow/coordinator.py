@@ -119,8 +119,6 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
         self.peers: dict[str, PeerState] = {}
         # device_id → 包含它的 group_id 集合(用于把设备事件放大到组)
         self._device_groups: dict[str, set[str]] = {}
-        # group_id → 有序 memberIds(HA 分组 UI 要按固定顺序展示,并据此选 leader)
-        self._group_members: dict[str, list[str]] = {}
         self._ws_task: asyncio.Task | None = None
         self._ws_connected = False
         self._closing = False
@@ -199,7 +197,6 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
         """重建 device → groups 索引。组变动不频繁,跟着轮询走即可。"""
         if not any(p.kind == PEER_KIND_GROUP for p in self.peers.values()):
             self._device_groups = {}
-            self._group_members = {}
             return
         try:
             data = await self.client.async_get_groups()
@@ -207,17 +204,14 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             _LOGGER.debug("拉取组列表失败: %s", err)
             return
         index: dict[str, set[str]] = {}
-        members: dict[str, list[str]] = {}
         for group in data:
             group_id = group.get("id")
             if not isinstance(group_id, str):
                 continue
             ordered = [m for m in (group.get("memberIds") or []) if isinstance(m, str)]
-            members[group_id] = ordered
             for member in ordered:
                 index.setdefault(member, set()).add(group_id)
         self._device_groups = index
-        self._group_members = members
 
     # ==================== WebSocket ====================
     async def _ws_loop(self) -> None:
@@ -409,30 +403,12 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
     def get_peer(self, peer_id: str) -> PeerState | None:
         return self.peers.get(peer_id)
 
-    # ---- 分组(HA GROUPING 用)----
-    def group_member_ids(self, group_id: str) -> list[str]:
-        """组内成员的裸 deviceId,顺序与后端一致。"""
-        return list(self._group_members.get(group_id) or [])
-
+    # ---- 分组归属(设备 → 组,只读)----
     def primary_group_of_device(self, device_id: str) -> str | None:
         """设备所属的组。
 
-        MusicFlow 允许一台设备同时在多个组里,HA 的分组模型只有一个组,
-        所以取组列表里最靠前的那个作为它在 HA 中的归属。
+        MusicFlow 允许一台设备同时在多个组里,这里取任意一个作为它的归属,
+        用于把成员实体的传输控制转发给组(镜像服务器行为,不改服务器配置)。
         """
         groups = self._device_groups.get(device_id)
-        if not groups:
-            return None
-        for group_id in self._group_members:
-            if group_id in groups:
-                return group_id
-        return next(iter(groups))
-
-    def group_leader_device(self, group_id: str) -> str | None:
-        """组的状态派生 leader = 固定顺序里第一个在线成员(与后端 protocolPlayer 一致)。"""
-        members = self._group_members.get(group_id) or []
-        for device_id in members:
-            peer = self.peers.get(f"{PEER_KIND_DLNA}:{device_id}")
-            if peer is not None and peer.available:
-                return device_id
-        return members[0] if members else None
+        return next(iter(groups)) if groups else None

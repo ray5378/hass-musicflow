@@ -25,7 +25,7 @@ Home Assistant `media_player` entity, with real-time state over WebSocket.
 | Media library | Browse playlists / albums / artists / genres with cover art |
 | Search | In-library search from the media browser (HA 2025.5+) |
 | Media source | MusicFlow shows up in the global **Media** tab, playable on ANY HA player |
-| Grouping | Create and edit multi-room groups straight from the HA card |
+| Sync groups (read-only) | MusicFlow groups appear as normal players; edit them on the server |
 | Volume + mute | Independent per-device volume and mute, two-way synced |
 | Announce / TTS | Interrupt playback, speak, then resume the original track and position |
 | Source select | Move the current queue and playback position to another speaker |
@@ -126,16 +126,17 @@ attaches every player entity to it:
 Adding or removing devices and groups in MusicFlow is picked up automatically on
 the next refresh, no restart required.
 
-### Grouping and multi-room
+### Sync groups and multi-room
 
-Group entities behave like Sonos groups:
+A MusicFlow sync group shows up as one normal media player entity, just like a
+DLNA renderer. Play, pause, queue and volume controls act on the whole group.
 
-- The group entity is listed first in `group_members` and acts as the leader.
-- Joining a member forwards its transport controls to `group:<id>`, so play,
-  pause and queue operations affect the whole group.
-- Volume stays **per device**, so you can still balance individual speakers.
-- Using the HA card's grouping UI creates, edits or dissolves the matching
-  MusicFlow sync group on the server.
+The integration is **read-only** about group membership: create groups and
+add / remove devices on the MusicFlow server, and the HA entities mirror that
+automatically on the next refresh. There is no join / unjoin UI, so the HA
+card can never modify your server-side group configuration.
+
+Volume stays **per device**, so you can still balance individual speakers.
 
 ### Media source
 
@@ -229,7 +230,6 @@ HA dashboard (control plane)
 | No cover art when away from home | Requires integration 1.2.0+, artwork is proxied through HA |
 | Search field missing | Requires Home Assistant 2025.5 or newer |
 | Mute / announce do nothing | Requires MusicFlow server 1.1.7 or newer |
-| Group controls missing | Requires integration 1.2.0+ |
 
 Enable debug logging:
 

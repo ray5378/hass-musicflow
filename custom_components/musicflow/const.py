@@ -50,7 +50,6 @@ BROWSE_LIMIT: Final = 300
 # queue/play 之后设备要先起播才吃得下 seek,这段是给它的缓冲(见后端 announce.ts 同款处理)
 TRANSFER_SEEK_DELAY: Final = 1.2
 # HA 分组 UI 直接建组时的组名后缀:"客厅音箱 组"
-AUTO_GROUP_SUFFIX: Final = " 组"
 
 # ==================== peer 种类 ====================
 PEER_KIND_LOCAL: Final = "local"

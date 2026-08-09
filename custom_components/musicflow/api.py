@@ -234,24 +234,6 @@ class MusicFlowClient:
         groups = data.get("groups") if isinstance(data, dict) else None
         return groups if isinstance(groups, list) else []
 
-    async def async_create_group(self, name: str, member_ids: list[str]) -> dict:
-        """POST /v1/groups —— 新建组。member_ids 是裸 deviceId(不带 `dlna:`)。"""
-        data = await self._api_post("/groups", {"name": name, "memberIds": member_ids})
-        group = data.get("group") if isinstance(data, dict) else None
-        return group if isinstance(group, dict) else {}
-
-    async def async_set_group_members(self, group_id: str, member_ids: list[str]) -> dict:
-        """PUT /v1/groups/:id —— 全量替换成员(后端会给新加入的成员对齐进度)。"""
-        data = await self._request(
-            "PUT", f"{API_PREFIX}/groups/{self._encode(group_id)}",
-            json_body={"memberIds": member_ids},
-        )
-        group = data.get("group") if isinstance(data, dict) else None
-        return group if isinstance(group, dict) else {}
-
-    async def async_delete_group(self, group_id: str) -> None:
-        await self._api_delete(f"/groups/{self._encode(group_id)}")
-
     # ---- 内容播放(统一入口)----
     async def async_play_content(
         self,
