@@ -59,6 +59,11 @@ class PeerState:
     queue: dict[str, Any] = field(default_factory=dict)
     status: dict[str, Any] = field(default_factory=dict)
     status_updated_at: datetime | None = None
+    # 进度时间轴修正:HA 的 media_position 必须随"当前曲目"归零,否则会拿旧锚点
+    # 把上一首甚至几首歌的进度按 (now - 旧锚点) 持续外推,表现为"换歌后时间仍往前
+    # 跑 / 进度是几首歌加起来的时间"。换歌瞬间把进度归零并立即重锚。
+    last_track_id: str | None = None
+    pending_reanchor: bool = False
 
     @property
     def controllable(self) -> bool:
@@ -83,6 +88,40 @@ class PeerState:
         media = self.status.get("media")
         return media if isinstance(media, dict) else None
 
+    @property
+    def _track_identity(self) -> str | None:
+        """当前曲目身份(稳定字符串),用于在换歌时重置进度时间轴。
+
+        优先用队列当前项的 id/songId(最权威),队列不可用时回退到 media 的
+        songId / title|artist|album。空则返回 None(未知曲目,不触发重置)。
+        """
+        item = self.current_item
+        if isinstance(item, dict):
+            sid = item.get("id") or item.get("songId")
+            if sid:
+                return str(sid)
+            title = item.get("title") or ""
+            artist = item.get("artist") or ""
+            album = item.get("album") or ""
+            if title or artist:
+                return f"{title}|{artist}|{album}"
+        return None
+
+    @property
+    def media_position(self) -> int | None:
+        """HA 标准 media_position:本轨内的播放位置(从 0 起),跨歌不累加。
+
+        换歌后的极短窗口(pending_reanchor)直接返回 0,避免旧 position 被 HA 按
+        旧锚点插值放大成"几首歌加起来的时间"。后端已保证 position 每轨归零
+        (control.ts 按 songId 重置基线),这里只做 HA 合规的归零 + 钳制。
+        """
+        if self.pending_reanchor:
+            return 0
+        raw = self.status.get("position")
+        if not isinstance(raw, (int, float)):
+            return None
+        return max(0, int(raw))
+
     def apply_peer(self, peer: dict[str, Any]) -> None:
         """合并一条后端 Peer / PeerWithQueue 记录。"""
         self.name = peer.get("name") or self.name
@@ -94,21 +133,35 @@ class PeerState:
     def apply_status(self, status: dict[str, Any]) -> None:
         """合并一条 DeviceStatus。字段缺失时保留旧值,避免局部事件抹掉已知状态。
 
-        media_position_updated_at 的锚点只在本条状态携带 position 时更新:
-        优先用服务端的 updatedAt(ms epoch,服务端采样 position 的时刻),时间基准与
-        position 一致,卡片按 (now - updatedAt) 插值才不会滞后/回跳。纯 volume /
-        muted / media 事件不重置进度时间轴,否则会用旧 position + 新时间戳,造成
-        YAMP 进度条周期性回跳。
+        进度时间轴处理(关键,修 HA 标准媒体卡片进度跨歌累加):
+        - 检测曲目身份变化(_track_identity),换歌时立刻把 media_position 归零
+          (pending_reanchor)并把 media_position_updated_at 重锚到当前时刻,否则 HA
+          会拿旧锚点把上一首甚至几首歌的进度按 (now - 旧锚点) 持续外推,表现为
+          "换歌后时间仍往前跑 / 进度是几首歌加起来的时间"。
+        - media_position_updated_at 的锚点在本条状态携带 position 时更新:优先用
+          服务端的 updatedAt(ms epoch,服务端采样 position 的时刻),时间基准与
+          position 一致,卡片按 (now - updatedAt) 插值才不会滞后/回跳。纯 volume /
+          muted 事件不重置进度时间轴,避免旧 position + 新时间戳造成周期性回跳。
         """
         merged = dict(self.status)
         merged.update({k: v for k, v in status.items() if v is not None})
         self.status = merged
+
+        # 换歌检测:曲目身份变了 -> 重置进度时间轴(归零 + 重锚)。
+        tid = self._track_identity
+        if tid and tid != self.last_track_id:
+            self.last_track_id = tid
+            self.pending_reanchor = True
+            self.status_updated_at = dt_util.utcnow()
+
         if "position" in status and isinstance(status.get("position"), (int, float)):
             updated_at = status.get("updatedAt")
             if isinstance(updated_at, (int, float)) and updated_at > 0:
                 self.status_updated_at = dt_util.utc_from_timestamp(updated_at / 1000)
             else:
                 self.status_updated_at = dt_util.utcnow()
+            # 本轨第一次带来 position 即解除"归零窗口",恢复正常读取。
+            self.pending_reanchor = False
 
 
 class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):

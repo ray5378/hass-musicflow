@@ -307,8 +307,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
 
     @property
     def media_position(self) -> int | None:
-        position = self._status.get("position")
-        return int(position) if isinstance(position, (int, float)) else None
+        # 走 PeerState.media_position:换歌时归零 + 钳制,符合 HA 标准(进度不跨歌累加)。
+        peer = self._peer
+        return peer.media_position if peer else None
 
     @property
     def media_position_updated_at(self):
