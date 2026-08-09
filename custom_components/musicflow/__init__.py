@@ -103,6 +103,26 @@ async def _ws_playlists(
     connection.send_result(msg["id"], {"playlists": playlists})
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "musicflow/backend_config",
+    }
+)
+@websocket_api.async_response
+async def _ws_backend_config(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """返回后端连接信息(url + api_key),供 MusicFlow 前端卡片直连 /ws + REST。
+
+    每个已加载的配置项贡献一个后端;卡片默认用第一个(单服务器场景)。
+    """
+    backends = hass.data.get(DOMAIN, {}).get("_backends", {})
+    configs = [v for v in backends.values() if v]
+    connection.send_result(msg["id"], {"backends": configs})
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """建立 client + coordinator,首刷成功后加载平台。"""
     session = async_get_clientsession(
@@ -115,6 +135,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    # 供 MusicFlow 前端卡片直连后端:暴露 url + api_key(卡片经 HA WS 取走后
+    # 直连后端 /ws + REST,实现与 Web/App 平等的实时双向同步)。
+    backends = hass.data[DOMAIN].setdefault("_backends", {})
+    backends[entry.entry_id] = {
+        "url": entry.data[CONF_URL],
+        "api_key": entry.data[CONF_API_KEY],
+    }
 
     # 服务器本体作为网关设备,播放器设备通过 via_device 归拢到它下面
     async_get_device_registry(hass).async_get_or_create(
@@ -142,6 +170,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         coordinator: MusicFlowCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_shutdown()
+        hass.data[DOMAIN].get("_backends", {}).pop(entry.entry_id, None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN)
     return unload_ok
