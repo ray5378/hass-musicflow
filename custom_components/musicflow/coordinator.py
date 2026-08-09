@@ -92,11 +92,23 @@ class PeerState:
             self.queue = queue
 
     def apply_status(self, status: dict[str, Any]) -> None:
-        """合并一条 DeviceStatus。字段缺失时保留旧值,避免局部事件抹掉已知状态。"""
+        """合并一条 DeviceStatus。字段缺失时保留旧值,避免局部事件抹掉已知状态。
+
+        media_position_updated_at 的锚点只在本条状态携带 position 时更新:
+        优先用服务端的 updatedAt(ms epoch,服务端采样 position 的时刻),时间基准与
+        position 一致,卡片按 (now - updatedAt) 插值才不会滞后/回跳。纯 volume /
+        muted / media 事件不重置进度时间轴,否则会用旧 position + 新时间戳,造成
+        YAMP 进度条周期性回跳。
+        """
         merged = dict(self.status)
         merged.update({k: v for k, v in status.items() if v is not None})
         self.status = merged
-        self.status_updated_at = dt_util.utcnow()
+        if "position" in status and isinstance(status.get("position"), (int, float)):
+            updated_at = status.get("updatedAt")
+            if isinstance(updated_at, (int, float)) and updated_at > 0:
+                self.status_updated_at = dt_util.utc_from_timestamp(updated_at / 1000)
+            else:
+                self.status_updated_at = dt_util.utcnow()
 
 
 class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
