@@ -180,22 +180,77 @@ class MusicFlowClient:
             {"volume": max(0, min(100, int(round(volume))))},
         )
 
+    async def async_set_mute(self, peer_id: str, muted: bool) -> None:
+        """静音开关。
+
+        后端把它当成独立于音量的 RenderingControl 状态量(SetMute),不会去动
+        Volume —— 取消静音后设备自己恢复原音量,集成侧不需要缓存旧音量。
+        """
+        await self._api_post(
+            f"/peers/{self._encode(peer_id)}/mute", {"muted": bool(muted)}
+        )
+
     async def async_set_play_mode(self, peer_id: str, mode: str) -> None:
         await self._api_post(f"/peers/{self._encode(peer_id)}/play-mode", {"mode": mode})
 
     async def async_clear_queue(self, peer_id: str) -> None:
         await self._api_delete(f"/peers/{self._encode(peer_id)}/queue")
 
+    async def async_queue_play(
+        self, peer_id: str, items: list[dict], start_index: int = 0
+    ) -> None:
+        """POST /v1/peers/:peerId/queue/play —— 直接把一组 QueueItem 灌给播放器。
+
+        用于"播放转移":QueueItem 是后端自产自销的结构,原样搬到另一个 peer 即可,
+        集成侧不需要知道这批歌当初是从哪个歌单/专辑点出来的。
+        """
+        await self._api_post(
+            f"/peers/{self._encode(peer_id)}/queue/play",
+            {"items": items, "startIndex": max(0, int(start_index))},
+        )
+
+    async def async_announce(
+        self, peer_id: str, url: str, *, volume: int | None = None
+    ) -> None:
+        """POST /v1/peers/:peerId/announce —— 打断当前播放放一段外链音频。
+
+        后端默认非阻塞(202):保存现场 → 播报 → 播完自动回到原曲原进度。
+        HA 的 play_media(announce=True) 不该被一段 30 秒语音卡住,所以这里不传
+        blocking。
+        """
+        body: dict[str, Any] = {"url": url}
+        if volume is not None:
+            body["volume"] = max(0, min(100, int(round(volume))))
+        await self._api_post(f"/peers/{self._encode(peer_id)}/announce", body)
+
     # ==================== 播放器群组 ====================
     async def async_get_groups(self) -> list[dict]:
         """GET /v1/groups —— 组列表(含 memberIds)。
 
-        组本身已经以 `group:<id>` 的形式出现在 peers 里,这里只是为了拿到成员
-        设备,好把 leader 设备的实时状态事件映射回组(组状态派生自 leader)。
+        组本身已经以 `group:<id>` 的形式出现在 peers 里,这里既用于拿到成员设备
+        (把 leader 的实时状态事件映射回组),也用于 HA 分组 UI 的成员展示。
         """
         data = await self._api_get("/groups")
         groups = data.get("groups") if isinstance(data, dict) else None
         return groups if isinstance(groups, list) else []
+
+    async def async_create_group(self, name: str, member_ids: list[str]) -> dict:
+        """POST /v1/groups —— 新建组。member_ids 是裸 deviceId(不带 `dlna:`)。"""
+        data = await self._api_post("/groups", {"name": name, "memberIds": member_ids})
+        group = data.get("group") if isinstance(data, dict) else None
+        return group if isinstance(group, dict) else {}
+
+    async def async_set_group_members(self, group_id: str, member_ids: list[str]) -> dict:
+        """PUT /v1/groups/:id —— 全量替换成员(后端会给新加入的成员对齐进度)。"""
+        data = await self._request(
+            "PUT", f"{API_PREFIX}/groups/{self._encode(group_id)}",
+            json_body={"memberIds": member_ids},
+        )
+        group = data.get("group") if isinstance(data, dict) else None
+        return group if isinstance(group, dict) else {}
+
+    async def async_delete_group(self, group_id: str) -> None:
+        await self._api_delete(f"/groups/{self._encode(group_id)}")
 
     # ---- 内容播放(统一入口)----
     async def async_play_content(
@@ -240,6 +295,12 @@ class MusicFlowClient:
     async def async_get_album(self, album_id: str) -> dict:
         return await self._subsonic("getAlbum", {"id": album_id})
 
+    async def async_get_song(self, song_id: str) -> dict:
+        """单曲详情。media_source 解析时用它拿 contentType/suffix 定 mime。"""
+        resp = await self._subsonic("getSong", {"id": song_id})
+        song = resp.get("song")
+        return song if isinstance(song, dict) else {}
+
     async def async_get_playlists(self) -> dict:
         return await self._subsonic("getPlaylists")
 
@@ -273,6 +334,36 @@ class MusicFlowClient:
             f"{self._base_url}{SUBSONIC_PREFIX}/getCoverArt"
             f"?id={quote(str(cover_art), safe='')}&size={size}"
         )
+
+    def stream_url(self, song_id: str) -> str:
+        """歌曲直链。给 media_source 用:HA 会把这个 URL 交给播放器/浏览器,
+        没法带 Authorization 头,所以凭据走 `?token=` —— 后端 auth 中间件对该参数
+        先按 JWT 验、再回退 API Key(与 WebSocket 的 ?token= 同一套契约)。
+        """
+        return (
+            f"{self._base_url}{SUBSONIC_PREFIX}/stream"
+            f"?id={quote(str(song_id), safe='')}"
+            f"&token={quote(self._api_key, safe='')}"
+        )
+
+    async def async_fetch_image(self, url: str) -> tuple[bytes | None, str | None]:
+        """拉一张图并返回 (内容, content-type)。
+
+        用于 `async_get_browse_image`:HA 前端在外网访问时够不着内网的 MusicFlow,
+        由 HA 服务端代拉再喂给前端。
+        """
+        try:
+            async with self._session.get(
+                URL(url, encoded=True),
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                if resp.status >= 400:
+                    return None, None
+                return await resp.read(), resp.content_type
+        except (TimeoutError, asyncio.TimeoutError, aiohttp.ClientError) as err:
+            _LOGGER.debug("拉取封面 %s 失败: %s", url, err)
+            return None, None
 
     # ==================== WebSocket ====================
     def add_listener(self, callback: Callable[[dict], None]) -> None:

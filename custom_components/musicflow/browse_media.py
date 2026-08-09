@@ -13,10 +13,15 @@ media_content_id 编码方案(与 `/rest/api/v1/play` 的 type 一一对应,
   musicflow://genres          流派列表
   musicflow://genre/<name>    流派内曲目          → play type=genre
   musicflow://song/<id>       单曲(叶子)         → play type=song
+
+封面:节点的 thumbnail 由调用方通过 `thumb` 回调决定。media_player 传的是
+"走 HA 代理"的实现(`get_browse_image_url`),这样从外网访问 HA 时前端不必去
+直连内网的 MusicFlow;不传则回退成 MusicFlow 直链。
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from urllib.parse import quote, unquote
 
 from homeassistant.components.media_player import BrowseError, BrowseMedia, MediaClass, MediaType
@@ -33,6 +38,9 @@ from .const import BROWSE_LIMIT, MEDIA_URI_PREFIX
 
 ROOT_ID = MEDIA_URI_PREFIX
 
+# (media_content_type, media_content_id, cover_art) → thumbnail URL
+ThumbFn = Callable[[str, str, str | None], str | None]
+
 
 def parse_media_id(media_content_id: str) -> tuple[str, str]:
     """把 `musicflow://album/123` 拆成 ("album", "123")。
@@ -44,32 +52,44 @@ def parse_media_id(media_content_id: str) -> tuple[str, str]:
     return kind, unquote(rest)
 
 
+def _direct_thumb(client: MusicFlowClient) -> ThumbFn:
+    """默认封面策略:MusicFlow 直链(局域网内最省事,外网访问会拉不到)。"""
+
+    def _thumb(_content_type: str, _content_id: str, cover_art: str | None) -> str | None:
+        return client.cover_url(cover_art)
+
+    return _thumb
+
+
 async def build_browse_media(
     client: MusicFlowClient,
     media_content_id: str | None,
+    thumb: ThumbFn | None = None,
 ) -> BrowseMedia:
     """返回 media_content_id 对应的 BrowseMedia 节点。"""
+    thumb = thumb or _direct_thumb(client)
+
     if not media_content_id or media_content_id == ROOT_ID:
         return _root_menu()
 
     kind, value = parse_media_id(media_content_id)
 
     if kind == "playlists":
-        return await _browse_playlists(client)
+        return await _browse_playlists(client, thumb)
     if kind == "playlist" and value:
-        return await _browse_playlist(client, value)
+        return await _browse_playlist(client, thumb, value)
     if kind == "albums":
-        return await _browse_albums(client)
+        return await _browse_albums(client, thumb)
     if kind == "album" and value:
-        return await _browse_album(client, value)
+        return await _browse_album(client, thumb, value)
     if kind == "artists":
-        return await _browse_artists(client)
+        return await _browse_artists(client, thumb)
     if kind == "artist" and value:
-        return await _browse_artist(client, value)
+        return await _browse_artist(client, thumb, value)
     if kind == "genres":
         return await _browse_genres(client)
     if kind == "genre" and value:
-        return await _browse_genre(client, value)
+        return await _browse_genre(client, thumb, value)
 
     raise BrowseError(f"无法浏览 {media_content_id}")
 
@@ -106,97 +126,84 @@ def _root_menu() -> BrowseMedia:
 
 
 # ==================== 歌单 ====================
-async def _browse_playlists(client: MusicFlowClient) -> BrowseMedia:
+async def _browse_playlists(client: MusicFlowClient, thumb: ThumbFn) -> BrowseMedia:
     resp = await client.async_get_playlists()
     playlists = _as_list(resp.get("playlists", {}).get("playlist"))
-    children = [
-        BrowseMedia(
-            title=p.get("name") or "未命名歌单",
-            media_class=MediaClass.PLAYLIST,
-            media_content_id=f"{MEDIA_URI_PREFIX}playlist/{quote(str(p['id']), safe='')}",
-            media_content_type=MediaType.PLAYLIST,
-            can_play=True,
-            can_expand=True,
-            thumbnail=client.cover_url(p.get("coverArt")),
-        )
-        for p in playlists
-        if p.get("id") is not None
-    ]
+    children = [_playlist_node(thumb, p) for p in playlists if p.get("id") is not None]
     return _directory("歌单", f"{MEDIA_URI_PREFIX}playlists", MediaType.PLAYLIST, children, MediaClass.PLAYLIST)
 
 
-async def _browse_playlist(client: MusicFlowClient, playlist_id: str) -> BrowseMedia:
+async def _browse_playlist(
+    client: MusicFlowClient, thumb: ThumbFn, playlist_id: str
+) -> BrowseMedia:
     resp = await client.async_get_playlist(playlist_id)
     playlist = resp.get("playlist", {})
-    children = [_song_node(client, s) for s in _as_list(playlist.get("entry"))]
+    children = [_song_node(thumb, s) for s in _as_list(playlist.get("entry"))]
+    content_id = f"{MEDIA_URI_PREFIX}playlist/{quote(playlist_id, safe='')}"
     return _directory(
         playlist.get("name") or "歌单",
-        f"{MEDIA_URI_PREFIX}playlist/{quote(playlist_id, safe='')}",
+        content_id,
         MediaType.PLAYLIST,
         children,
         MediaClass.TRACK,
         can_play=True,
-        thumbnail=client.cover_url(playlist.get("coverArt")),
+        thumbnail=thumb(MediaType.PLAYLIST, content_id, playlist.get("coverArt")),
     )
 
 
 # ==================== 专辑 ====================
-async def _browse_albums(client: MusicFlowClient) -> BrowseMedia:
+async def _browse_albums(client: MusicFlowClient, thumb: ThumbFn) -> BrowseMedia:
     resp = await client.async_get_album_list("newest", BROWSE_LIMIT)
     albums = _as_list(resp.get("albumList", {}).get("album"))
-    children = [_album_node(client, a) for a in albums if a.get("id") is not None]
+    children = [_album_node(thumb, a) for a in albums if a.get("id") is not None]
     return _directory("专辑", f"{MEDIA_URI_PREFIX}albums", MediaType.ALBUM, children, MediaClass.ALBUM)
 
 
-async def _browse_album(client: MusicFlowClient, album_id: str) -> BrowseMedia:
+async def _browse_album(
+    client: MusicFlowClient, thumb: ThumbFn, album_id: str
+) -> BrowseMedia:
     resp = await client.async_get_album(album_id)
     album = resp.get("album", {})
-    children = [_song_node(client, s) for s in _as_list(album.get("song"))]
+    children = [_song_node(thumb, s) for s in _as_list(album.get("song"))]
+    content_id = f"{MEDIA_URI_PREFIX}album/{quote(album_id, safe='')}"
     return _directory(
         _join(album.get("artist"), album.get("name") or "专辑"),
-        f"{MEDIA_URI_PREFIX}album/{quote(album_id, safe='')}",
+        content_id,
         MediaType.ALBUM,
         children,
         MediaClass.TRACK,
         can_play=True,
-        thumbnail=client.cover_url(album.get("coverArt")),
+        thumbnail=thumb(MediaType.ALBUM, content_id, album.get("coverArt")),
     )
 
 
 # ==================== 艺术家 ====================
-async def _browse_artists(client: MusicFlowClient) -> BrowseMedia:
+async def _browse_artists(client: MusicFlowClient, thumb: ThumbFn) -> BrowseMedia:
     resp = await client.async_get_artists()
     children: list[BrowseMedia] = []
     for index in _as_list(resp.get("artists", {}).get("index")):
         for artist in _as_list(index.get("artist")):
             if artist.get("id") is None:
                 continue
-            children.append(
-                BrowseMedia(
-                    title=artist.get("name") or "未知艺术家",
-                    media_class=MediaClass.ARTIST,
-                    media_content_id=f"{MEDIA_URI_PREFIX}artist/{quote(str(artist['id']), safe='')}",
-                    media_content_type=MediaType.ARTIST,
-                    can_play=True,
-                    can_expand=True,
-                    thumbnail=client.cover_url(artist.get("coverArt")),
-                )
-            )
+            children.append(_artist_node(thumb, artist))
     return _directory("艺术家", f"{MEDIA_URI_PREFIX}artists", MediaType.ARTIST, children, MediaClass.ARTIST)
 
 
-async def _browse_artist(client: MusicFlowClient, artist_id: str) -> BrowseMedia:
+async def _browse_artist(
+    client: MusicFlowClient, thumb: ThumbFn, artist_id: str
+) -> BrowseMedia:
     resp = await client.async_get_artist(artist_id)
     artist = resp.get("artist", {})
-    children = [_album_node(client, a) for a in _as_list(artist.get("album")) if a.get("id") is not None]
+    children = [_album_node(thumb, a) for a in _as_list(artist.get("album")) if a.get("id") is not None]
+    content_id = f"{MEDIA_URI_PREFIX}artist/{quote(artist_id, safe='')}"
     return _directory(
         artist.get("name") or "艺术家",
-        f"{MEDIA_URI_PREFIX}artist/{quote(artist_id, safe='')}",
+        content_id,
         MediaType.ARTIST,
         children,
         MediaClass.ALBUM,
         can_play=True,
-        thumbnail=client.cover_url(artist.get("coverArt")),
+        thumbnail=thumb(MediaType.ARTIST, content_id, artist.get("coverArt")),
     )
 
 
@@ -223,10 +230,12 @@ async def _browse_genres(client: MusicFlowClient) -> BrowseMedia:
     return _directory("流派", f"{MEDIA_URI_PREFIX}genres", MediaType.GENRE, children, MediaClass.GENRE)
 
 
-async def _browse_genre(client: MusicFlowClient, genre: str) -> BrowseMedia:
+async def _browse_genre(
+    client: MusicFlowClient, thumb: ThumbFn, genre: str
+) -> BrowseMedia:
     resp = await client.async_get_songs_by_genre(genre, BROWSE_LIMIT)
     songs = _as_list(resp.get("songsByGenre", {}).get("song"))
-    children = [_song_node(client, s) for s in songs]
+    children = [_song_node(thumb, s) for s in songs]
     return _directory(
         genre,
         f"{MEDIA_URI_PREFIX}genre/{quote(genre, safe='')}",
@@ -251,27 +260,55 @@ def _join(artist: str | None, name: str) -> str:
     return f"{artist} - {name}" if artist else name
 
 
-def _album_node(client: MusicFlowClient, album: dict) -> BrowseMedia:
+def _album_node(thumb: ThumbFn, album: dict) -> BrowseMedia:
+    content_id = f"{MEDIA_URI_PREFIX}album/{quote(str(album['id']), safe='')}"
     return BrowseMedia(
         title=_join(album.get("artist"), album.get("name") or "未知专辑"),
         media_class=MediaClass.ALBUM,
-        media_content_id=f"{MEDIA_URI_PREFIX}album/{quote(str(album['id']), safe='')}",
+        media_content_id=content_id,
         media_content_type=MediaType.ALBUM,
         can_play=True,
         can_expand=True,
-        thumbnail=client.cover_url(album.get("coverArt")),
+        thumbnail=thumb(MediaType.ALBUM, content_id, album.get("coverArt")),
     )
 
 
-def _song_node(client: MusicFlowClient, song: dict) -> BrowseMedia:
+def _song_node(thumb: ThumbFn, song: dict) -> BrowseMedia:
+    content_id = f"{MEDIA_URI_PREFIX}song/{quote(str(song.get('id', '')), safe='')}"
     return BrowseMedia(
         title=song.get("title") or "未知曲目",
         media_class=MediaClass.TRACK,
-        media_content_id=f"{MEDIA_URI_PREFIX}song/{quote(str(song.get('id', '')), safe='')}",
+        media_content_id=content_id,
         media_content_type=MediaType.TRACK,
         can_play=True,
         can_expand=False,
-        thumbnail=client.cover_url(song.get("coverArt")),
+        thumbnail=thumb(MediaType.TRACK, content_id, song.get("coverArt")),
+    )
+
+
+def _artist_node(thumb: ThumbFn, artist: dict) -> BrowseMedia:
+    content_id = f"{MEDIA_URI_PREFIX}artist/{quote(str(artist['id']), safe='')}"
+    return BrowseMedia(
+        title=artist.get("name") or "未知艺术家",
+        media_class=MediaClass.ARTIST,
+        media_content_id=content_id,
+        media_content_type=MediaType.ARTIST,
+        can_play=True,
+        can_expand=True,
+        thumbnail=thumb(MediaType.ARTIST, content_id, artist.get("coverArt")),
+    )
+
+
+def _playlist_node(thumb: ThumbFn, playlist: dict) -> BrowseMedia:
+    content_id = f"{MEDIA_URI_PREFIX}playlist/{quote(str(playlist['id']), safe='')}"
+    return BrowseMedia(
+        title=playlist.get("name") or "未命名歌单",
+        media_class=MediaClass.PLAYLIST,
+        media_content_id=content_id,
+        media_content_type=MediaType.PLAYLIST,
+        can_play=True,
+        can_expand=True,
+        thumbnail=thumb(MediaType.PLAYLIST, content_id, playlist.get("coverArt")),
     )
 
 
@@ -301,32 +338,11 @@ def _directory(
 
 
 # ==================== 搜索 ====================
-def _artist_node(client: MusicFlowClient, artist: dict) -> BrowseMedia:
-    return BrowseMedia(
-        title=artist.get("name") or "未知艺术家",
-        media_class=MediaClass.ARTIST,
-        media_content_id=f"{MEDIA_URI_PREFIX}artist/{quote(str(artist['id']), safe='')}",
-        media_content_type=MediaType.ARTIST,
-        can_play=True,
-        can_expand=True,
-        thumbnail=client.cover_url(artist.get("coverArt")),
-    )
-
-
-def _playlist_node(client: MusicFlowClient, playlist: dict) -> BrowseMedia:
-    return BrowseMedia(
-        title=playlist.get("name") or "未命名歌单",
-        media_class=MediaClass.PLAYLIST,
-        media_content_id=f"{MEDIA_URI_PREFIX}playlist/{quote(str(playlist['id']), safe='')}",
-        media_content_type=MediaType.PLAYLIST,
-        can_play=True,
-        can_expand=True,
-        thumbnail=client.cover_url(playlist.get("coverArt")),
-    )
-
-
 async def build_search_results(
-    client: MusicFlowClient, query: str, limit: int = 30
+    client: MusicFlowClient,
+    query: str,
+    limit: int = 30,
+    thumb: ThumbFn | None = None,
 ) -> BrowseMedia | "SearchMedia":
     """把 search3 的结果拼成一个可浏览的搜索结果。
 
@@ -336,6 +352,8 @@ async def build_search_results(
     新版 HA 要求 async_search_media 返回 SearchMedia(result=[...BrowseMedia]),
     旧版则返回 BrowseMedia 根节点 —— 此处按可用类做兼容。
     """
+    thumb = thumb or _direct_thumb(client)
+
     resp = await client.async_search(query, count=limit)
     result = resp.get("searchResult3", resp)
     albums = _as_list(result.get("album"))
@@ -351,10 +369,10 @@ async def build_search_results(
     ]
 
     children: list[BrowseMedia] = []
-    children.extend(_album_node(client, a) for a in albums if a.get("id") is not None)
-    children.extend(_artist_node(client, a) for a in artists if a.get("id") is not None)
-    children.extend(_playlist_node(client, p) for p in playlists if p.get("id") is not None)
-    children.extend(_song_node(client, s) for s in songs if s.get("id") is not None)
+    children.extend(_album_node(thumb, a) for a in albums if a.get("id") is not None)
+    children.extend(_artist_node(thumb, a) for a in artists if a.get("id") is not None)
+    children.extend(_playlist_node(thumb, p) for p in playlists if p.get("id") is not None)
+    children.extend(_song_node(thumb, s) for s in songs if s.get("id") is not None)
 
     if not children:
         children = [
