@@ -20,7 +20,10 @@ from .coordinator import MusicFlowCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER, Platform.MEDIA_SOURCE]
+# 只列"实体平台"。media_source 不是实体平台(Platform 枚举里根本没有这个成员),
+# HA 通过 async_process_integration_platforms 自动发现本包的 media_source.py
+# 并调用其中的 async_get_media_source(),不能也不需要走 async_forward_entry_setups。
+PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
