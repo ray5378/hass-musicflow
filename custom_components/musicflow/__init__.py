@@ -35,6 +35,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """注册 WebSocket 命令(自定义卡片用),只执行一次。"""
     websocket_api.async_register_command(hass, _ws_lyrics)
     websocket_api.async_register_command(hass, _ws_playlists)
+    websocket_api.async_register_command(hass, _ws_backend_config)
     return True
 
 
