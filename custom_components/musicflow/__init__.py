@@ -34,7 +34,18 @@ PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """注册 WebSocket 命令(自定义卡片用),只执行一次。"""
     websocket_api.async_register_command(hass, _ws_lyrics)
+    websocket_api.async_register_command(hass, _ws_playlists)
     return True
+
+
+def _coordinator_for_entity(
+    hass: HomeAssistant, entity_id: str
+) -> MusicFlowCoordinator | None:
+    """按实体 id 找到它所属配置项的 coordinator。"""
+    registry = er.async_get(hass)
+    entity = registry.async_get(entity_id)
+    entry_id = entity.config_entry_id if entity else None
+    return hass.data.get(DOMAIN, {}).get(entry_id or "")
 
 
 @websocket_api.websocket_command(
@@ -54,10 +65,7 @@ async def _ws_lyrics(
 
     卡片在检测到 song_id 变化时调一次即可;歌词按时间轴滚动在卡片本地做。
     """
-    registry = er.async_get(hass)
-    entity = registry.async_get(msg["entity_id"])
-    entry_id = entity.config_entry_id if entity else None
-    coordinator = hass.data.get(DOMAIN, {}).get(entry_id or "")
+    coordinator = _coordinator_for_entity(hass, msg["entity_id"])
     if coordinator is None:
         raise HomeAssistantError("MusicFlow 服务器未加载")
     try:
@@ -65,6 +73,34 @@ async def _ws_lyrics(
     except MusicFlowError as err:
         raise HomeAssistantError(str(err)) from err
     connection.send_result(msg["id"], {"lines": lines})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "musicflow/playlists",
+        vol.Required("entity_id"): str,
+    }
+)
+@websocket_api.async_response
+async def _ws_playlists(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """返回当前用户可添加的歌单列表 [{id, name}],供卡片「添加到歌单」下拉。"""
+    coordinator = _coordinator_for_entity(hass, msg["entity_id"])
+    if coordinator is None:
+        raise HomeAssistantError("MusicFlow 服务器未加载")
+    try:
+        resp = await coordinator.client.async_get_playlists()
+    except MusicFlowError as err:
+        raise HomeAssistantError(str(err)) from err
+    playlists = [
+        {"id": str(p.get("id")), "name": p.get("name") or "未命名歌单"}
+        for p in resp.get("playlists", {}).get("playlist") or []
+        if p.get("id") is not None
+    ]
+    connection.send_result(msg["id"], {"playlists": playlists})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
