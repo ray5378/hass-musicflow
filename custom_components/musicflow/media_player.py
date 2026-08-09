@@ -36,7 +36,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import MusicFlowError
-from .browse_media import build_browse_media, parse_media_id
+from .browse_media import build_browse_media, build_search_results, parse_media_id
 from .const import (
     ATTR_CONTENT_ID,
     ATTR_CONTENT_TYPE,
@@ -413,3 +413,16 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             return await build_browse_media(self.coordinator.client, media_content_id)
         except MusicFlowError as err:
             raise HomeAssistantError(f"浏览曲库失败: {err}") from err
+
+    async def async_search_media(
+        self,
+        search_query: str,
+        media_content_type: str | None = None,
+        media_content_id: str | None = None,
+        limit: int = 50,
+    ) -> BrowseMedia:
+        """HA 媒体浏览器搜索栏的落点:歌单/专辑/艺术家/歌曲统一搜索。"""
+        try:
+            return await build_search_results(self.coordinator.client, search_query, limit)
+        except MusicFlowError as err:
+            raise HomeAssistantError(f"搜索失败: {err}") from err

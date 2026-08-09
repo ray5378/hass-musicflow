@@ -83,6 +83,8 @@ def _root_menu() -> BrowseMedia:
         can_play=False,
         can_expand=True,
         children_media_class=MediaClass.DIRECTORY,
+        can_search=True,
+        preferred_view=MediaClass.ALBUM,
         children=[
             BrowseMedia(
                 title=title,
@@ -276,6 +278,8 @@ def _directory(
     *,
     can_play: bool = False,
     thumbnail: str | None = None,
+    can_search: bool = True,
+    preferred_view: MediaClass = MediaClass.ALBUM,
 ) -> BrowseMedia:
     return BrowseMedia(
         title=title,
@@ -287,4 +291,85 @@ def _directory(
         children=children,
         children_media_class=children_class,
         thumbnail=thumbnail,
+        can_search=can_search,
+        preferred_view=preferred_view,
+    )
+
+
+# ==================== 搜索 ====================
+def _artist_node(client: MusicFlowClient, artist: dict) -> BrowseMedia:
+    return BrowseMedia(
+        title=artist.get("name") or "未知艺术家",
+        media_class=MediaClass.ARTIST,
+        media_content_id=f"{MEDIA_URI_PREFIX}artist/{quote(str(artist['id']), safe='')}",
+        media_content_type=MediaType.ARTIST,
+        can_play=True,
+        can_expand=True,
+        thumbnail=client.cover_url(artist.get("coverArt")),
+    )
+
+
+def _playlist_node(client: MusicFlowClient, playlist: dict) -> BrowseMedia:
+    return BrowseMedia(
+        title=playlist.get("name") or "未命名歌单",
+        media_class=MediaClass.PLAYLIST,
+        media_content_id=f"{MEDIA_URI_PREFIX}playlist/{quote(str(playlist['id']), safe='')}",
+        media_content_type=MediaType.PLAYLIST,
+        can_play=True,
+        can_expand=True,
+        thumbnail=client.cover_url(playlist.get("coverArt")),
+    )
+
+
+async def build_search_results(
+    client: MusicFlowClient, query: str, limit: int = 30
+) -> BrowseMedia:
+    """把 search3 的结果拼成一个可浏览的搜索结果树。
+
+    search3 返回 artist/album/song;歌单不在结果里,这里单独拉取并按名称过滤。
+    专辑/艺术家/歌单可继续展开(点击后走既有 browse 路径),歌曲可直接播放。
+    """
+    resp = await client.async_search(query, count=limit)
+    result = resp.get("searchResult3", resp)
+    albums = _as_list(result.get("album"))
+    artists = _as_list(result.get("artist"))
+    songs = _as_list(result.get("song"))
+
+    playlists_resp = await client.async_get_playlists()
+    q = query.strip().lower()
+    playlists = [
+        p
+        for p in _as_list(playlists_resp.get("playlists", {}).get("playlist"))
+        if q and q in (p.get("name") or "").lower()
+    ]
+
+    children: list[BrowseMedia] = []
+    children.extend(_album_node(client, a) for a in albums if a.get("id") is not None)
+    children.extend(_artist_node(client, a) for a in artists if a.get("id") is not None)
+    children.extend(_playlist_node(client, p) for p in playlists if p.get("id") is not None)
+    children.extend(_song_node(client, s) for s in songs if s.get("id") is not None)
+
+    if not children:
+        children = [
+            BrowseMedia(
+                title="没有找到匹配的结果",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{MEDIA_URI_PREFIX}search/empty",
+                media_content_type="",
+                can_play=False,
+                can_expand=False,
+            )
+        ]
+
+    return BrowseMedia(
+        title=f"搜索: {query}",
+        media_class=MediaClass.DIRECTORY,
+        media_content_id=f"{MEDIA_URI_PREFIX}search/{quote(query, safe='')}",
+        media_content_type="",
+        can_play=False,
+        can_expand=True,
+        children=children,
+        children_media_class=MediaClass.ALBUM,
+        can_search=True,
+        preferred_view=MediaClass.ALBUM,
     )
