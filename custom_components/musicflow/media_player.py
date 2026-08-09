@@ -150,6 +150,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
     _attr_name = None
     _attr_media_content_type = MediaType.MUSIC
     _attr_supported_features = SUPPORTED_FEATURES
+    # 封面直链指向 MusicFlow 主机(与 HA 不同域),必须声明为可远程访问,
+    # 否则 Home Assistant 出于安全默认会拒绝拉取外域图片,导致 DLNA 播放器看不到封面。
+    _attr_media_image_remotely_accessible = True
 
     def __init__(
         self,
