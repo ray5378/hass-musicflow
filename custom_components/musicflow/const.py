@@ -63,11 +63,16 @@ CONTROLLABLE_KINDS: Final = (PEER_KIND_DLNA, PEER_KIND_GROUP)
 SERVICE_PLAY_CONTENT: Final = "play_content"
 SERVICE_SET_PLAY_MODE: Final = "set_play_mode"
 SERVICE_CLEAR_QUEUE: Final = "clear_queue"
+SERVICE_LIKE_TRACK: Final = "like_track"
+SERVICE_ADD_TO_PLAYLIST: Final = "add_to_playlist"
 
 ATTR_CONTENT_TYPE: Final = "content_type"
 ATTR_CONTENT_ID: Final = "content_id"
 ATTR_START_INDEX: Final = "start_index"
 ATTR_PLAY_MODE: Final = "play_mode"
 ATTR_ENQUEUE: Final = "enqueue"
+ATTR_LIKED: Final = "liked"
+ATTR_PLAYLIST_ID: Final = "playlist_id"
+ATTR_SONG_IDS: Final = "song_ids"
 
 PLAY_MODES: Final = ("order", "one", "all", "shuffle")

@@ -62,3 +62,37 @@ clear_queue:
     entity:
       integration: musicflow
       domain: media_player
+
+like_track:
+  name: 喜欢 / 取消喜欢当前曲目
+  description: 把当前播放的歌曲加入或移出「我喜欢的音乐」。不传 liked 则为切换。
+  target:
+    entity:
+      integration: musicflow
+      domain: media_player
+  fields:
+    liked:
+      description: true=收藏, false=取消收藏。不传则按当前状态切换。
+      example: true
+      selector:
+        boolean:
+
+add_to_playlist:
+  name: 添加到歌单
+  description: 把当前播放的歌曲(或指定的 song_ids)追加到指定歌单。
+  target:
+    entity:
+      integration: musicflow
+      domain: media_player
+  fields:
+    playlist_id:
+      required: true
+      description: 目标歌单 id(可在实体属性或 MusicFlow 网页中查看)。
+      example: "pl-1720000000000"
+      selector:
+        text:
+    song_ids:
+      description: 要添加的歌曲 id 列表。缺省时添加当前播放的歌曲。
+      example: '["3f1c2b8a-..."]'
+      selector:
+        object:

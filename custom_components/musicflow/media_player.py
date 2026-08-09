@@ -47,7 +47,10 @@ from .const import (
     ATTR_CONTENT_ID,
     ATTR_CONTENT_TYPE,
     ATTR_ENQUEUE,
+    ATTR_LIKED,
     ATTR_PLAY_MODE,
+    ATTR_PLAYLIST_ID,
+    ATTR_SONG_IDS,
     ATTR_START_INDEX,
     DOMAIN,
     MEDIA_URI_PREFIX,
@@ -55,7 +58,9 @@ from .const import (
     PEER_KIND_GROUP,
     PLAY_MODES,
     PLAYABLE_TYPES,
+    SERVICE_ADD_TO_PLAYLIST,
     SERVICE_CLEAR_QUEUE,
+    SERVICE_LIKE_TRACK,
     SERVICE_PLAY_CONTENT,
     SERVICE_SET_PLAY_MODE,
     TRANSFER_SEEK_DELAY,
@@ -160,6 +165,19 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_CLEAR_QUEUE, {}, "async_clear_playlist"
+    )
+    platform.async_register_entity_service(
+        SERVICE_LIKE_TRACK,
+        {vol.Optional(ATTR_LIKED): cv.boolean},
+        "async_like_track",
+    )
+    platform.async_register_entity_service(
+        SERVICE_ADD_TO_PLAYLIST,
+        {
+            vol.Required(ATTR_PLAYLIST_ID): cv.string,
+            vol.Optional(ATTR_SONG_IDS): vol.All(cv.ensure_list, [cv.string]),
+        },
+        "async_add_to_playlist",
     )
 
 
@@ -390,6 +408,8 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         peer = self._peer
         queue = self._queue
         items = queue.get("items") or []
+        item = self._current_item
+        song_id = str(item.get("songId")) if item and item.get("songId") else None
         return {
             "peer_id": self.peer_id,
             "peer_kind": peer.kind if peer else None,
@@ -399,6 +419,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             "websocket_connected": self.coordinator.ws_connected,
             # 入组后传输控制会转发到组,把实际落点暴露出来便于排查
             "control_peer_id": self._control_peer_id,
+            # 播放控件用:当前曲目 id 与是否已收藏(卡片心形按钮 / 自动化)
+            "song_id": song_id,
+            "liked": bool(song_id and song_id in self.coordinator.starred),
         }
 
     # ==================== 传输控制 ====================
@@ -472,6 +495,37 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
 
     async def async_clear_playlist(self) -> None:
         await self._call(self.coordinator.client.async_clear_queue(self._control_peer_id))
+
+    async def async_like_track(self, liked: bool | None = None) -> None:
+        """喜欢 / 取消喜欢当前曲目(心形按钮)。不传 liked 则切换。"""
+        item = self._current_item
+        song_id = str(item.get("songId")) if item and item.get("songId") else None
+        if not song_id:
+            raise HomeAssistantError("当前没有正在播放的歌曲")
+        should_like = liked if liked is not None else song_id not in self.coordinator.starred
+        try:
+            if should_like:
+                await self.coordinator.client.async_star([song_id])
+            else:
+                await self.coordinator.client.async_unstar([song_id])
+        except MusicFlowError as err:
+            raise HomeAssistantError(f"更新喜欢失败: {err}") from err
+        await self.coordinator.async_request_refresh()
+
+    async def async_add_to_playlist(
+        self, playlist_id: str, song_ids: list[str] | None = None
+    ) -> None:
+        """把当前曲目(或指定曲目)追加到歌单。"""
+        item = self._current_item
+        cur = str(item.get("songId")) if item and item.get("songId") else None
+        targets = song_ids or ([cur] if cur else [])
+        if not targets:
+            raise HomeAssistantError("当前没有正在播放的歌曲,也没有指定 song_ids")
+        try:
+            await self.coordinator.client.async_add_to_playlist(playlist_id, targets)
+        except MusicFlowError as err:
+            raise HomeAssistantError(f"添加到歌单失败: {err}") from err
+        await self.coordinator.async_request_refresh()
 
     async def async_set_shuffle(self, shuffle: bool) -> None:
         await self.async_apply_play_mode("shuffle" if shuffle else "order")

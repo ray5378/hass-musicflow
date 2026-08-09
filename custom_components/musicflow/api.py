@@ -306,6 +306,41 @@ class MusicFlowClient:
             },
         )
 
+    # ==================== 收藏 / 歌词 / 歌单编辑(播放控件用)====================
+    async def async_star(self, song_ids: list[str]) -> None:
+        """喜欢:把歌曲加进当前用户的「我喜欢的音乐」。"""
+        await self._subsonic("star", {"id": ",".join(song_ids)})
+
+    async def async_unstar(self, song_ids: list[str]) -> None:
+        """取消喜欢。"""
+        await self._subsonic("unstar", {"id": ",".join(song_ids)})
+
+    async def async_get_starred(self) -> set[str]:
+        """当前用户已收藏的 songId 集合。"""
+        resp = await self._subsonic("getStarred")
+        songs = resp.get("starred", {}).get("song") or []
+        return {str(s.get("id")) for s in songs if s.get("id")}
+
+    async def async_get_lyrics(self, song_id: str) -> list[dict]:
+        """结构化歌词行: [{start: 毫秒, value: str}]。无歌词返回空列表。"""
+        resp = await self._subsonic("getLyricsBySongId", {"id": song_id})
+        structured = resp.get("lyricsList", {}).get("structuredLyrics") or []
+        lines: list[dict[str, Any]] = []
+        for block in structured:
+            for line in block.get("line") or []:
+                if isinstance(line, dict) and line.get("value"):
+                    lines.append(
+                        {"start": int(line.get("start") or 0), "value": str(line["value"])}
+                    )
+        return lines
+
+    async def async_add_to_playlist(self, playlist_id: str, song_ids: list[str]) -> None:
+        """把歌曲追加到指定歌单(后端校验归属,非本人/非管理员歌单只读)。"""
+        await self._subsonic(
+            "updatePlaylist",
+            {"playlistId": playlist_id, "songIdToAdd": ",".join(song_ids)},
+        )
+
     def cover_url(self, cover_art: str | None, size: int = 400) -> str | None:
         """封面直链。后端 index.ts 对 /rest/getCoverArt 显式放行鉴权,
         所以这个 URL 可以直接交给 HA 前端加载,不需要带 token。

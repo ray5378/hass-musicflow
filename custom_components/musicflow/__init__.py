@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import logging
 
+import voluptuous as vol
+
+from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntryType, async_get as async_get_device_registry
 
-from .api import MusicFlowClient
+from .api import MusicFlowClient, MusicFlowError
 from .const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL, DOMAIN
 from .coordinator import MusicFlowCoordinator
 
@@ -24,6 +29,42 @@ _LOGGER = logging.getLogger(__name__)
 # HA 通过 async_process_integration_platforms 自动发现本包的 media_source.py
 # 并调用其中的 async_get_media_source(),不能也不需要走 async_forward_entry_setups。
 PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """注册 WebSocket 命令(自定义卡片用),只执行一次。"""
+    websocket_api.async_register_command(hass, _ws_lyrics)
+    return True
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "musicflow/lyrics",
+        vol.Required("entity_id"): str,
+        vol.Required("song_id"): str,
+    }
+)
+@websocket_api.async_response
+async def _ws_lyrics(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """返回结构化歌词行 [{start: 毫秒, value: str}],供卡片滚动高亮。
+
+    卡片在检测到 song_id 变化时调一次即可;歌词按时间轴滚动在卡片本地做。
+    """
+    registry = er.async_get(hass)
+    entity = registry.async_get(msg["entity_id"])
+    entry_id = entity.config_entry_id if entity else None
+    coordinator = hass.data.get(DOMAIN, {}).get(entry_id or "")
+    if coordinator is None:
+        raise HomeAssistantError("MusicFlow 服务器未加载")
+    try:
+        lines = await coordinator.client.async_get_lyrics(msg["song_id"])
+    except MusicFlowError as err:
+        raise HomeAssistantError(str(err)) from err
+    connection.send_result(msg["id"], {"lines": lines})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

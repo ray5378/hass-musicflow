@@ -3,12 +3,12 @@
   "name": "MusicFlow",
   "codeowners": ["@ray5378"],
   "config_flow": true,
-  "dependencies": ["media_source"],
+  "dependencies": ["media_source", "websocket_api"],
   "documentation": "https://github.com/ray5378/hass-musicflow",
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/ray5378/hass-musicflow/issues",
   "requirements": [],
-  "version": "1.2.4",
+  "version": "1.2.5",
   "zeroconf": ["_musicflow._tcp.local."]
 }

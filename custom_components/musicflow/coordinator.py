@@ -119,6 +119,8 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
         self.peers: dict[str, PeerState] = {}
         # device_id → 包含它的 group_id 集合(用于把设备事件放大到组)
         self._device_groups: dict[str, set[str]] = {}
+        # 当前用户已收藏的 songId 集合(卡片心形按钮 / 实体 liked 属性)
+        self._starred: set[str] = set()
         self._ws_task: asyncio.Task | None = None
         self._ws_connected = False
         self._closing = False
@@ -175,6 +177,7 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
                 self.peers.pop(peer_id, None)
 
         await self._async_refresh_groups_index()
+        await self._async_refresh_starred()
 
         # 只拉可控且在线的 peer 状态,离线设备拉状态会白等超时
         targets = [
@@ -212,6 +215,13 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             for member in ordered:
                 index.setdefault(member, set()).add(group_id)
         self._device_groups = index
+
+    async def _async_refresh_starred(self) -> None:
+        """刷新「我喜欢的音乐」songId 集合(供实体的 liked 属性与卡片心形按钮)。"""
+        try:
+            self._starred = await self.client.async_get_starred()
+        except MusicFlowError as err:
+            _LOGGER.debug("拉取收藏列表失败: %s", err)
 
     # ==================== WebSocket ====================
     async def _ws_loop(self) -> None:
@@ -402,6 +412,11 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
 
     def get_peer(self, peer_id: str) -> PeerState | None:
         return self.peers.get(peer_id)
+
+    @property
+    def starred(self) -> set[str]:
+        """当前用户已收藏的 songId 集合。"""
+        return self._starred
 
     # ---- 分组归属(设备 → 组,只读)----
     def primary_group_of_device(self, device_id: str) -> str | None:
