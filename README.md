@@ -29,13 +29,23 @@
 
 ## 配置
 
-如果已运行 MusicFlow(加载项或独立 Docker),集成会通过 Zeroconf 自动发现,确认即可。手动配置时填写:
+### 先拿到 API Key
+
+集成用 API Key 作长期凭据(登录 Token 24 小时过期,不适合常驻客户端)。
+
+打开 MusicFlow Web UI → **设置** → **API Key** → **生成** → **复制**。
+
+### 再添加集成
+
+如果已运行 MusicFlow(加载项或独立 Docker),集成会通过 Zeroconf 自动发现,地址自动填好,只需补 API Key。手动配置时填写:
 
 | 字段 | 说明 |
 |---|---|
 | URL | MusicFlow 地址,如 `http://192.168.1.10:46400`(省略协议和端口时按 `http` / `46400` 补全) |
-| API Key | MusicFlow 用户的 API Key(在 MusicFlow 的「设置 → 账号」中生成) |
+| API Key | 上一步复制的 Key,形如 `mf_xxxxxxxx...` |
 | 校验 SSL 证书 | 仅在使用 https 且证书为自签名时取消勾选 |
+
+> 在 MusicFlow 里点「重新生成」或「撤销」会让旧 Key 立即失效,HA 侧会弹出重新认证提示,填入新 Key 即可。
 
 ## 实体与设备
 
@@ -100,7 +110,9 @@ HA 只充当**远程控制器**,音频流始终在 MusicFlow 后端 ↔ DLNA 设
 ## 版本要求
 
 - Home Assistant **2024.12.0** 及以上
-- MusicFlow 服务端 **v1.0.3** 及以上(需要 `/rest/api/v1/play` 支持 `song` 类型)
+- MusicFlow 服务端 **v1.0.4** 及以上
+  - v1.0.3 起 `/rest/api/v1/play` 支持 `song` 类型
+  - v1.0.4 起设置页才能生成 API Key(更早的版本没有生成入口,配置流程走不下去)
 
 集成不引入任何额外 Python 依赖,WebSocket 复用 HA 自带的 aiohttp。
 
