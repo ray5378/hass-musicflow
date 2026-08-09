@@ -84,7 +84,6 @@ def _root_menu() -> BrowseMedia:
         can_expand=True,
         children_media_class=MediaClass.DIRECTORY,
         can_search=True,
-        preferred_view=MediaClass.ALBUM,
         children=[
             BrowseMedia(
                 title=title,
@@ -279,7 +278,6 @@ def _directory(
     can_play: bool = False,
     thumbnail: str | None = None,
     can_search: bool = True,
-    preferred_view: MediaClass = MediaClass.ALBUM,
 ) -> BrowseMedia:
     return BrowseMedia(
         title=title,
@@ -292,7 +290,6 @@ def _directory(
         children_media_class=children_class,
         thumbnail=thumbnail,
         can_search=can_search,
-        preferred_view=preferred_view,
     )
 
 
@@ -371,5 +368,4 @@ async def build_search_results(
         children=children,
         children_media_class=MediaClass.ALBUM,
         can_search=True,
-        preferred_view=MediaClass.ALBUM,
     )
