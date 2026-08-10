@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntryType, async_get as async_get_device_registry
@@ -30,6 +31,10 @@ _LOGGER = logging.getLogger(__name__)
 # HA 通过 async_process_integration_platforms 自动发现本包的 media_source.py
 # 并调用其中的 async_get_media_source(),不能也不需要走 async_forward_entry_setups。
 PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
+
+# 纯配置项集成(async_setup 里注册了 WS 命令与 REST 代理视图,但没有 YAML 配置),
+# hassfest 要求实现 async_setup 的集成声明 CONFIG_SCHEMA。
+CONFIG_SCHEMA = cv.config_entry_only_config_schema
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
