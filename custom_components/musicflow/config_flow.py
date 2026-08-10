@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -50,10 +51,15 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_validate(
         self, url: str, api_key: str, verify_ssl: bool
     ) -> tuple[dict[str, str], dict[str, Any]]:
-        """返回 (errors, user_info)。errors 为空表示校验通过。"""
-        session = async_get_clientsession(self.hass, verify_ssl=verify_ssl)
-        client = MusicFlowClient(session, url, api_key)
+        """返回 (errors, user_info)。errors 为空表示校验通过。
+
+        HA 的 flow 管理器只捕获 AbortFlow,async_step_* 里任何其他异常都会
+        原样穿透成前端 500(Unknown error occurred),所以这里必须把所有
+        预期/非预期异常都转成表单错误。
+        """
         try:
+            session = async_get_clientsession(self.hass, verify_ssl=verify_ssl)
+            client = MusicFlowClient(session, url, api_key)
             info = await client.async_verify()
         except MusicFlowAuthError:
             return {"base": "invalid_auth"}, {}
@@ -81,23 +87,31 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         url_default = ""
         if user_input is not None:
-            url = _normalize_url(user_input[CONF_URL])
-            url_default = url
-            api_key = user_input[CONF_API_KEY].strip()
-            verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
-            errors, info = await self._async_validate(url, api_key, verify_ssl)
-            if not errors:
-                # 手动添加时没有 mDNS uuid,退而用 URL 去重
-                await self.async_set_unique_id(url, raise_on_progress=False)
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=self._title(info, url),
-                    data={
-                        CONF_URL: url,
-                        CONF_API_KEY: api_key,
-                        CONF_VERIFY_SSL: verify_ssl,
-                    },
-                )
+            try:
+                url = _normalize_url(user_input[CONF_URL])
+                url_default = url
+                api_key = user_input[CONF_API_KEY].strip()
+                verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
+                errors, info = await self._async_validate(url, api_key, verify_ssl)
+                if not errors:
+                    # 手动添加时没有 mDNS uuid,退而用 URL 去重
+                    await self.async_set_unique_id(url, raise_on_progress=False)
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=self._title(info, url),
+                        data={
+                            CONF_URL: url,
+                            CONF_API_KEY: api_key,
+                            CONF_VERIFY_SSL: verify_ssl,
+                        },
+                    )
+            except AbortFlow:
+                # 已在别的 flow/条目里配置过:正常中止,交给 HA 处理
+                raise
+            except Exception:  # noqa: BLE001
+                # flow 管理器只捕获 AbortFlow,这里不兜住就会 500
+                _LOGGER.exception("MusicFlow 配置流 user 步骤出现未预期异常")
+                errors = {"base": "unknown"}
 
         return self.async_show_form(
             step_id="user",
@@ -139,18 +153,24 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         url = self._discovered_url or ""
         if user_input is not None:
-            api_key = user_input[CONF_API_KEY].strip()
-            verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
-            errors, info = await self._async_validate(url, api_key, verify_ssl)
-            if not errors:
-                return self.async_create_entry(
-                    title=self._title(info, url, self._discovered_name),
-                    data={
-                        CONF_URL: url,
-                        CONF_API_KEY: api_key,
-                        CONF_VERIFY_SSL: verify_ssl,
-                    },
-                )
+            try:
+                api_key = user_input[CONF_API_KEY].strip()
+                verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
+                errors, info = await self._async_validate(url, api_key, verify_ssl)
+                if not errors:
+                    return self.async_create_entry(
+                        title=self._title(info, url, self._discovered_name),
+                        data={
+                            CONF_URL: url,
+                            CONF_API_KEY: api_key,
+                            CONF_VERIFY_SSL: verify_ssl,
+                        },
+                    )
+            except AbortFlow:
+                raise
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("MusicFlow 配置流 zeroconf_confirm 步骤出现未预期异常")
+                errors = {"base": "unknown"}
 
         return self.async_show_form(
             step_id="zeroconf_confirm",
@@ -177,17 +197,24 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """API Key 失效时重新填写。"""
-        entry = self._get_reauth_entry()
         errors: dict[str, str] = {}
-        url = entry.data[CONF_URL]
-        if user_input is not None:
-            api_key = user_input[CONF_API_KEY].strip()
-            verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
-            errors, _info = await self._async_validate(url, api_key, verify_ssl)
-            if not errors:
-                return self.async_update_reload_and_abort(
-                    entry, data_updates={CONF_API_KEY: api_key}
-                )
+        url = ""
+        try:
+            entry = self._get_reauth_entry()
+            url = entry.data[CONF_URL]
+            if user_input is not None:
+                api_key = user_input[CONF_API_KEY].strip()
+                verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
+                errors, _info = await self._async_validate(url, api_key, verify_ssl)
+                if not errors:
+                    return self.async_update_reload_and_abort(
+                        entry, data_updates={CONF_API_KEY: api_key}
+                    )
+        except AbortFlow:
+            raise
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("MusicFlow 配置流 reauth_confirm 步骤出现未预期异常")
+            errors = {"base": "unknown"}
 
         return self.async_show_form(
             step_id="reauth_confirm",
