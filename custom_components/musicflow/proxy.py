@@ -108,7 +108,9 @@ class MusicFlowProxyView(HomeAssistantView):
         else:
             tail = f"/{request.match_info.get('tail', '')}"
         target = f"{backend['url'].rstrip('/')}/rest{tail}"
-        if request.query_string:
+        # raw_path 已包含完整 query string;只有当 target 里还没有 '?' 时才补充,
+        # 否则会把 query 拼两次(出现两个 '?'),导致后端解析出混乱的 size/id → 封面失败。
+        if request.query_string and "?" not in target:
             target = f"{target}?{request.query_string}"
         # 兜底:把集成持有的 api_key 作为 ?token= 带上。集成补的
         # `Authorization: Bearer` 头依赖后端 v1.1.7+ 的 "Bearer->apiKey" 回退;
