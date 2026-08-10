@@ -44,8 +44,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, _ws_backend_config)
     # 卡片代理模式(外网访问)的事件通道:订阅后端 WS 并转发
     websocket_api.async_register_command(hass, _ws_subscribe)
-    # 卡片代理模式的 REST 通道:转发 /rest/*(含封面等二进制响应)
-    hass.http.register_view(MusicFlowProxyView(hass))
+    # 卡片代理模式的 REST 通道:转发 /rest/*(含封面等二进制响应)。
+    # 视图注册失败只影响代理模式,绝不能拖垮整个集成(否则所有配置项都未加载)。
+    try:
+        hass.http.register_view(MusicFlowProxyView(hass))
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("注册 MusicFlow 代理视图失败,代理模式不可用")
     return True
 
 

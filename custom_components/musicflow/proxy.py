@@ -64,7 +64,13 @@ def _build_ws_url(url: str, api_key: str) -> str:
 
 
 class MusicFlowProxyView(HomeAssistantView):
-    """把 /api/musicflow/rest/{tail} 原样转发到后端 /rest/{tail}。"""
+    """把 /api/musicflow/rest/{tail} 原样转发到后端 /rest/{tail}。
+
+    注意:HomeAssistantView 的处理器方法名是 get/post/put/delete(不是
+    async_get),register() 按这些名字用 getattr 查找,写错会静默注册零条路由;
+    且 request_handler_factory 会把 **request.match_info(含 tail) 传进来,
+    签名必须带 **kwargs。
+    """
 
     url = "/api/musicflow/rest/{tail:.*}"
     name = "musicflow:rest"
@@ -73,16 +79,16 @@ class MusicFlowProxyView(HomeAssistantView):
         super().__init__()
         self._hass = hass
 
-    async def async_get(self, request: web.Request) -> web.Response:
+    async def get(self, request: web.Request, **kwargs: Any) -> web.Response:
         return await self._forward(request, "GET")
 
-    async def async_post(self, request: web.Request) -> web.Response:
+    async def post(self, request: web.Request, **kwargs: Any) -> web.Response:
         return await self._forward(request, "POST")
 
-    async def async_put(self, request: web.Request) -> web.Response:
+    async def put(self, request: web.Request, **kwargs: Any) -> web.Response:
         return await self._forward(request, "PUT")
 
-    async def async_delete(self, request: web.Request) -> web.Response:
+    async def delete(self, request: web.Request, **kwargs: Any) -> web.Response:
         return await self._forward(request, "DELETE")
 
     async def _forward(
