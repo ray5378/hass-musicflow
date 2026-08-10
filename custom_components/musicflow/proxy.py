@@ -110,6 +110,14 @@ class MusicFlowProxyView(HomeAssistantView):
         target = f"{backend['url'].rstrip('/')}/rest{tail}"
         if request.query_string:
             target = f"{target}?{request.query_string}"
+        # 兜底:把集成持有的 api_key 作为 ?token= 带上。集成补的
+        # `Authorization: Bearer` 头依赖后端 v1.1.7+ 的 "Bearer->apiKey" 回退;
+        # 较旧后端(或 :latest 镜像滞后)或被反向代理剥离自定义头时该头会认证
+        # 失败,导致 star 等需要用户身份的操作在代理模式 401。?token= 走与直连
+        # 完全相同的契约(后端各版本均支持),让收藏在外网代理下稳定可用。
+        if backend.get("api_key"):
+            sep = "&" if "?" in target else "?"
+            target = f"{target}{sep}token={quote(backend['api_key'], safe='')}"
         # encoded=True:tail 已是编码后的路径,不再二次编码(否则 %2F 会被拆成路径分隔符)
         url = URL(target, encoded=True)
 
