@@ -121,7 +121,13 @@ class MusicFlowProxyView(HomeAssistantView):
         # encoded=True:tail 已是编码后的路径,不再二次编码(否则 %2F 会被拆成路径分隔符)
         url = URL(target, encoded=True)
 
+        # 透传浏览器的内容协商/条件请求头,让后端能按 Accept 返回 webp、
+        # 并按 If-None-Match 返回 304(否则外网代理模式无法复用封面缓存)。
         headers = {"Authorization": f"Bearer {backend['api_key']}"}
+        for _h in ("Accept", "If-None-Match", "If-Modified-Since"):
+            _v = request.headers.get(_h)
+            if _v:
+                headers[_h] = _v
         data: bytes | None = None
         if method in ("POST", "PUT"):
             data = await request.read()
@@ -137,10 +143,14 @@ class MusicFlowProxyView(HomeAssistantView):
                 method, url, headers=headers, data=data
             ) as resp:
                 body = await resp.read()
+                # 透传缓存相关响应头,使外网代理模式也能复用封面(Cache-Control/ETag/Vary)
+                _pass = {"cache-control", "etag", "vary", "last-modified", "expires", "accept-ranges"}
+                _out_headers = {k: v for k, v in resp.headers.items() if k.lower() in _pass}
                 return web.Response(
                     status=resp.status,
                     body=body,
                     content_type=resp.content_type,
+                    headers=_out_headers,
                 )
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             _LOGGER.debug("转发 %s %s 失败: %s", method, tail, err)
