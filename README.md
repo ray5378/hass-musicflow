@@ -31,6 +31,7 @@ Home Assistant `media_player` entity, with real-time state over WebSocket.
 | Source select | Move the current queue and playback position to another speaker |
 | Power | Soft power on/off for devices without a real power switch |
 | Cover art proxy | Artwork is proxied through HA, so it works from outside your LAN |
+| WAN proxy for the card | The MusicFlow dashboard card falls back to HA (REST + events) when it cannot reach the backend directly, e.g. outside your LAN |
 | Zeroconf | Auto-discovery of the MusicFlow server, IP changes are picked up |
 | Re-auth | If the API key is revoked, HA prompts you to enter a new one |
 
@@ -43,8 +44,8 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 
 | Integration | MusicFlow server | Home Assistant |
 |---|---|---|
-| **1.2.0** | **1.1.7** or newer | 2024.12 or newer |
-| 1.1.x | 1.1.0 or newer | 2024.12 or newer |
+| **1.3.0** | **1.1.7** or newer | 2024.12 or newer |
+| 1.2.x | 1.1.7 or newer | 2024.12 or newer |
 
 Notes:
 

@@ -22,6 +22,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, async_get as 
 from .api import MusicFlowClient, MusicFlowError
 from .const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL, DOMAIN
 from .coordinator import MusicFlowCoordinator
+from .proxy import MusicFlowProxyView, _ws_subscribe
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,10 +33,14 @@ PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """注册 WebSocket 命令(自定义卡片用),只执行一次。"""
+    """注册 WebSocket 命令(自定义卡片用)与 REST 代理视图,只执行一次。"""
     websocket_api.async_register_command(hass, _ws_lyrics)
     websocket_api.async_register_command(hass, _ws_playlists)
     websocket_api.async_register_command(hass, _ws_backend_config)
+    # 卡片代理模式(外网访问)的事件通道:订阅后端 WS 并转发
+    websocket_api.async_register_command(hass, _ws_subscribe)
+    # 卡片代理模式的 REST 通道:转发 /rest/*(含封面等二进制响应)
+    hass.http.register_view(MusicFlowProxyView(hass))
     return True
 
 
@@ -138,11 +143,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     # 供 MusicFlow 前端卡片直连后端:暴露 url + api_key(卡片经 HA WS 取走后
-    # 直连后端 /ws + REST,实现与 Web/App 平等的实时双向同步)。
+    # 直连后端 /ws + REST,实现与 Web/App 平等的实时双向同步);
+    # proxySupported 表示本集成提供 REST 代理 + 事件订阅,卡片外网访问失败时
+    # 可自动切换经 HA 中转(API Key 不下发浏览器,只存在 HA 侧)。
     backends = hass.data[DOMAIN].setdefault("_backends", {})
     backends[entry.entry_id] = {
         "url": entry.data[CONF_URL],
         "api_key": entry.data[CONF_API_KEY],
+        "proxySupported": True,
+        "verify_ssl": entry.data.get(CONF_VERIFY_SSL, True),
     }
 
     # 服务器本体作为网关设备,播放器设备通过 via_device 归拢到它下面
