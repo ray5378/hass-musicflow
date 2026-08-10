@@ -88,35 +88,32 @@ jobs:
         # function instead of a schema, the integration failed to load
         # ("未加载") and the config flow returned HTTP 500. hassfest only checks
         # that the symbol exists, so CI stayed green. This asserts the value is
-        # a vol.Schema and that it actually behaves like a validator - exactly
-        # what HA does when it loads the integration.
+        # a callable config validator - NOT the uncalled factory function - and
+        # that it actually validates a config dict the way HA does at load time.
         run: |
           python - <<'PY'
-          import voluptuous as vol
           from homeassistant.helpers import config_validation as cv
           from custom_components.musicflow import CONFIG_SCHEMA
 
-          # The exact regression: assigning the function without calling it.
+          # The exact regression: assigning the factory without calling it.
           assert CONFIG_SCHEMA is not cv.config_entry_only_config_schema, (
-              "CONFIG_SCHEMA is the bare function - it must be called with DOMAIN, "
-              "e.g. cv.config_entry_only_config_schema(DOMAIN)"
+              "CONFIG_SCHEMA is the bare cv.config_entry_only_config_schema "
+              "function - it must be called with DOMAIN, e.g. "
+              "cv.config_entry_only_config_schema(DOMAIN)"
           )
-          # A real schema is a vol.Schema instance, not a plain function.
-          assert isinstance(CONFIG_SCHEMA, vol.Schema), (
-              "CONFIG_SCHEMA must be a vol.Schema instance, not the bare "
-              "cv.config_entry_only_config_schema function reference"
-          )
-          # Exercise it the way HA does (cv.async_validate ultimately calls it).
-          # config_entry_only_config_schema uses an Optional domain key, so an
-          # empty config must validate; a bare function would not do this.
+          # HA calls CONFIG_SCHEMA(config) and expects a dict back. The exact
+          # return type differs between HA versions (a vol.Schema in older ones,
+          # a Callable[[dict], dict] in newer ones), so check behavior, not type.
+          assert callable(CONFIG_SCHEMA), "CONFIG_SCHEMA must be callable"
           try:
               result = CONFIG_SCHEMA({})
-          except vol.Invalid:
-              # Schema requires the domain key to be present - it is still a
-              # real validator, which is all this regression check cares about.
-              result = None
-          assert isinstance(result, (dict, type(None))), (
-              "CONFIG_SCHEMA({}) did not behave like a config schema"
+          except Exception as err:
+              raise AssertionError(
+                  f"CONFIG_SCHEMA({{}}) raised {err!r} - it is not a real "
+                  "config validator"
+              ) from err
+          assert isinstance(result, dict), (
+              f"CONFIG_SCHEMA({{}}) must return a dict, got {type(result)}"
           )
           print("CONFIG_SCHEMA regression check ok")
           PY
