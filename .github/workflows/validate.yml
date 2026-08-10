@@ -81,3 +81,42 @@ jobs:
           assert callable(async_get_media_source)
           print("media_source hook ok")
           PY
+
+      - name: Regression check - CONFIG_SCHEMA must be a real schema
+        # 1.3.0-1.3.2 shipped `CONFIG_SCHEMA = cv.config_entry_only_config_schema`
+        # (the bare function, never called with DOMAIN). HA then received a
+        # function instead of a schema, the integration failed to load
+        # ("未加载") and the config flow returned HTTP 500. hassfest only checks
+        # that the symbol exists, so CI stayed green. This asserts the value is
+        # a vol.Schema and that it actually behaves like a validator - exactly
+        # what HA does when it loads the integration.
+        run: |
+          python - <<'PY'
+          import voluptuous as vol
+          from homeassistant.helpers import config_validation as cv
+          from custom_components.musicflow import CONFIG_SCHEMA
+
+          # The exact regression: assigning the function without calling it.
+          assert CONFIG_SCHEMA is not cv.config_entry_only_config_schema, (
+              "CONFIG_SCHEMA is the bare function - it must be called with DOMAIN, "
+              "e.g. cv.config_entry_only_config_schema(DOMAIN)"
+          )
+          # A real schema is a vol.Schema instance, not a plain function.
+          assert isinstance(CONFIG_SCHEMA, vol.Schema), (
+              "CONFIG_SCHEMA must be a vol.Schema instance, not the bare "
+              "cv.config_entry_only_config_schema function reference"
+          )
+          # Exercise it the way HA does (cv.async_validate ultimately calls it).
+          # config_entry_only_config_schema uses an Optional domain key, so an
+          # empty config must validate; a bare function would not do this.
+          try:
+              result = CONFIG_SCHEMA({})
+          except vol.Invalid:
+              # Schema requires the domain key to be present - it is still a
+              # real validator, which is all this regression check cares about.
+              result = None
+          assert isinstance(result, (dict, type(None))), (
+              "CONFIG_SCHEMA({}) did not behave like a config schema"
+          )
+          print("CONFIG_SCHEMA regression check ok")
+          PY
