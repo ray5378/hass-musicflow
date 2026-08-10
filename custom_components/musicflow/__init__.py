@@ -34,7 +34,10 @@ PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 
 # 纯配置项集成(async_setup 里注册了 WS 命令与 REST 代理视图,但没有 YAML 配置),
 # hassfest 要求实现 async_setup 的集成声明 CONFIG_SCHEMA。
-CONFIG_SCHEMA = cv.config_entry_only_config_schema
+# 注意:config_entry_only_config_schema 是一个接受 domain 的函数,必须调用它,
+# 直接赋函数引用会让 HA 配置校验拿到一个函数而非 schema,导致集成整体加载失败
+# (所有条目"未加载"且配置流 500)。这是 1.3.0~1.3.2 一直连不上的根因。
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:

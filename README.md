@@ -44,7 +44,7 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 
 | Integration | MusicFlow server | Home Assistant |
 |---|---|---|
-| **1.3.2** | **1.1.7** or newer | 2024.12 or newer |
+| **1.3.3** | **1.1.7** or newer | 2024.12 or newer |
 | 1.3.0+ | 1.1.7 or newer | 2024.12 or newer |
 
 Notes:
