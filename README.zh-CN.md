@@ -38,8 +38,12 @@ Home Assistant 只充当**远程控制器**，音频流始终在 MusicFlow 后�
 
 | 集成版本 | MusicFlow 服务端 | Home Assistant |
 |---|---|---|
-| **1.3.3** | **1.1.7** 及以上 | 2024.12 及以上 |
+| **1.3.6** | **1.1.19** 及以上 | 2024.12 及以上 |
 | 1.3.0+ | 1.1.7 及以上 | 2024.12 及以上 |
+
+前端卡片 [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card)
+**v1.6.11** 是配套测试版本（服务端 **v1.1.19** + 集成 **v1.3.6** + 卡片 **v1.6.11**），
+三者请保持配套。
 
 说明：
 
@@ -204,8 +208,8 @@ HA 仪表盘（控制面）
 |---|---|
 | 配置完没有实体 | 确认 MusicFlow 里至少有一个在线的 DLNA 设备或播放组 |
 | 反复要求重新认证 | API Key 被撤销或密码被改过，重新生成一个 Key |
-| 外网访问时没有封面 | 需要集成 1.2.0+，封面会经 HA 代理下发 |
-| 外网访问时卡片显示异常/变暗 | 需要集成 1.3.0+ 与卡片 v1.6.0+，卡片在直连失败时自动切换为经 HA 中转（REST + 事件订阅） |
+| 外网访问时没有封面 | 需要集成 1.3.0+，封面会经 HA 代理下发 |
+| 外网访问时卡片显示异常/变暗 | 需要集成 1.3.0+ 与卡片 v1.6.11+，卡片在直连失败时自动切换为经 HA 中转（REST + 事件订阅） |
 | 看不到搜索框 | 需要 Home Assistant 2025.5 及以上 |
 | 静音 / 播报无效 | 需要 MusicFlow 服务端 1.1.7 及以上 |
 
@@ -227,7 +231,7 @@ logger:
 | [MusicFlow](https://github.com/ray5378/MusicFlow) | 音乐服务端本体（后端 + Web UI） |
 | [hassio-addons](https://github.com/ray5378/hassio-addons) | HA 加载项，把 MusicFlow 跑在 Supervisor 下 |
 | hass-musicflow（本仓库） | HACS 自定义集成 |
-| [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card) | Lovelace 卡片：喜欢 / 添加到歌单 / 滚动歌词 / 切换输出设备（需集成 1.2.6+） |
+| [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card) | Lovelace 卡片：喜欢 / 添加到歌单 / 滚动歌词 / 切换输出设备（需集成 1.3.6+） |
 
 ## 许可证
 

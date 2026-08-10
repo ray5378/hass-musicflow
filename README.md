@@ -44,8 +44,12 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 
 | Integration | MusicFlow server | Home Assistant |
 |---|---|---|
-| **1.3.3** | **1.1.7** or newer | 2024.12 or newer |
+| **1.3.6** | **1.1.19** or newer | 2024.12 or newer |
 | 1.3.0+ | 1.1.7 or newer | 2024.12 or newer |
+
+The card [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card)
+**v1.6.11** is the tested companion (server **v1.1.19** + integration **v1.3.6** +
+card **v1.6.11**). Keep these three in sync.
 
 Notes:
 
@@ -228,7 +232,7 @@ HA dashboard (control plane)
 |---|---|
 | No entities after setup | Confirm MusicFlow has at least one online DLNA device or group |
 | Re-auth prompt keeps coming back | The API key was revoked or the password changed, generate a new key |
-| No cover art when away from home | Requires integration 1.2.0+, artwork is proxied through HA |
+| No cover art when away from home | Requires integration 1.3.0+, artwork is proxied through HA |
 | Search field missing | Requires Home Assistant 2025.5 or newer |
 | Mute / announce do nothing | Requires MusicFlow server 1.1.7 or newer |
 
@@ -250,7 +254,7 @@ logger:
 | [MusicFlow][musicflow] | The music server itself (backend + web UI) |
 | [hassio-addons](https://github.com/ray5378/hassio-addons) | Home Assistant add-on, runs MusicFlow under Supervisor |
 | hass-musicflow (this repo) | The HACS custom integration |
-| [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card) | Lovelace card: favorite, add-to-playlist, scrolling lyrics, output switch (needs integration 1.2.6+) |
+| [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card) | Lovelace card: favorite, add-to-playlist, scrolling lyrics, output switch (needs integration 1.3.6+) |
 
 ## License
 
