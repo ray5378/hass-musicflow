@@ -148,8 +148,10 @@ class MusicFlowClient:
         data = await self._api_get(f"/peers/{self._encode(peer_id)}/status")
         return data if isinstance(data, dict) else {}
 
-    async def async_get_peer_queue(self, peer_id: str) -> dict:
-        data = await self._api_get(f"/peers/{self._encode(peer_id)}/queue")
+    async def async_get_peer_queue(self, peer_id: str, *, offset: int = 0, size: int = 0) -> dict:
+        """GET /v1/peers/:peerId/queue —— offset/size 分页(缺省全量,兼容旧端点)。"""
+        qs = f"?offset={offset}&size={size}" if size > 0 else ""
+        data = await self._api_get(f"/peers/{self._encode(peer_id)}/queue{qs}")
         return data if isinstance(data, dict) else {}
 
     # ---- 传输控制 ----

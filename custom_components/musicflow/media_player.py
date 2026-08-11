@@ -409,13 +409,15 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         peer = self._peer
         queue = self._queue
         items = queue.get("items") or []
+        # 大队列下 WS 只推摘要(items=[]+total),queue_size 用 total 兜底。
+        queue_size = queue.get("total") or len(items)
         item = self._current_item
         song_id = str(item.get("songId")) if item and item.get("songId") else None
         return {
             "peer_id": self.peer_id,
             "peer_kind": peer.kind if peer else None,
             "play_mode": queue.get("playMode"),
-            "queue_size": len(items),
+            "queue_size": queue_size,
             "queue_position": queue.get("currentIndex"),
             "websocket_connected": self.coordinator.ws_connected,
             # 入组后传输控制会转发到组,把实际落点暴露出来便于排查
@@ -645,7 +647,7 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         )
         if target is None:
             raise HomeAssistantError(f"找不到可用的播放器「{source}」")
-        snapshot = self._playback_snapshot()
+        snapshot = await self._playback_snapshot()
         if snapshot is None:
             raise HomeAssistantError("当前没有可转移的播放队列")
         await self._transfer_playback(
@@ -653,10 +655,31 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         )
         await self.coordinator.async_request_refresh()
 
-    def _playback_snapshot(self) -> dict[str, Any] | None:
-        """把"现在在放什么、放到哪了"打个包,用于转移到别的播放器。"""
+    async def _playback_snapshot(self) -> dict[str, Any] | None:
+        """把"现在在放什么、放到哪了"打个包,用于转移到别的播放器。
+
+        大队列下 WS 只推摘要(items=[]),这里经 REST 分页把完整队列捞回来,
+        保证播放转移在几千首的队列上依然可用。
+        """
         queue = self._queue
         items = queue.get("items") or []
+        total = queue.get("total") or len(items)
+        if not items and total > 0:
+            items = []
+            fetched = 0
+            try:
+                while fetched < total:
+                    page = await self.coordinator.client.async_get_peer_queue(
+                        self._control_peer_id, offset=fetched, size=200
+                    )
+                    batch = page.get("items") or []
+                    if not batch:
+                        break
+                    items.extend(batch)
+                    fetched += len(batch)
+                total = page.get("total") or len(items)
+            except Exception as err:  # noqa: BLE001 - 转移失败要有明确提示
+                raise HomeAssistantError(f"拉取播放队列失败: {err}") from err
         if not items:
             return None
         index = queue.get("currentIndex")

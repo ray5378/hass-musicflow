@@ -44,12 +44,12 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 
 | Integration | MusicFlow server | Home Assistant |
 |---|---|---|
-| **1.3.6** | **1.1.19** or newer | 2024.12 or newer |
+| **1.3.7** | **1.1.21** or newer | 2024.12 or newer |
 | 1.3.0+ | 1.1.7 or newer | 2024.12 or newer |
 
 The card [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card)
-**v1.6.11** is the tested companion (server **v1.1.19** + integration **v1.3.6** +
-card **v1.6.11**). Keep these three in sync.
+**v1.6.27** is the tested companion (server **v1.1.21** + integration **1.3.7** +
+card **v1.6.27**). Keep these three in sync.
 
 Notes:
 
