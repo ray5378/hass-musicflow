@@ -50,7 +50,7 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 | 1.3.0+ | 1.7.x (V2) or newer | 2024.12 or newer |
 
 The card [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card)
-**v1.6.27** is the tested companion (server **v1.1.21** + integration **1.3.7** +
+**v1.6.27** is the tested companion (server **v1.7.x (V2)** + integration **1.3.7** +
 card **v1.6.27**). Keep these three in sync.
 
 Notes:
@@ -236,7 +236,7 @@ HA dashboard (control plane)
 | Re-auth prompt keeps coming back | The API key was revoked or the password changed, generate a new key |
 | No cover art when away from home | Requires integration 1.3.0+, artwork is proxied through HA |
 | Search field missing | Requires Home Assistant 2025.5 or newer |
-| Mute / announce do nothing | Requires MusicFlow server 1.1.7 or newer |
+| Mute / announce do nothing | Requires MusicFlow server 1.7.x (V2) or newer |
 
 Enable debug logging:
 
