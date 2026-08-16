@@ -12,7 +12,7 @@ Home Assistant `media_player` entity, with real-time state over WebSocket.
 
 > Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 >
-> **Note:** MusicFlow 主仓库 (ray5378/MusicFlow) 现已托管 **V2**（插件化版）；V1 MVP 已归档至 `V1-backup` 分支。
+> **Note:** MusicFlow 主仓库 (ray5378/MusicFlow) 现已是插件化架构版。
 
 [![Open your Home Assistant instance and open this repository inside HACS.][my-badge]][my-link]
 
@@ -46,11 +46,11 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 
 | Integration | MusicFlow server | Home Assistant |
 |---|---|---|
-| **1.3.7** | **1.7.x (V2)** or newer | 2024.12 or newer |
-| 1.3.0+ | 1.7.x (V2) or newer | 2024.12 or newer |
+| **1.3.7** | **1.7.x** or newer | 2024.12 or newer |
+| 1.3.0+ | 1.7.x or newer | 2024.12 or newer |
 
 The card [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card)
-**v1.6.27** is the tested companion (server **v1.7.x (V2)** + integration **1.3.7** +
+**v1.6.27** is the tested companion (server **v1.7.x** + integration **1.3.7** +
 card **v1.6.27**). Keep these three in sync.
 
 Notes:
@@ -58,7 +58,7 @@ Notes:
 - The in-library **search box** needs Home Assistant **2025.5** or newer. On older
   cores everything else still works, only the search field is hidden.
 - Mute, announce (TTS), source select and the richer track metadata need
-  MusicFlow server **1.7.x (V2)** or newer.
+  MusicFlow server **1.7.x** or newer.
 - Not sure which server version you run? Open `http://<musicflow-host>/ping`.
   It returns `{"status":"ok","version":"1.7.x"}`.
 
@@ -236,7 +236,7 @@ HA dashboard (control plane)
 | Re-auth prompt keeps coming back | The API key was revoked or the password changed, generate a new key |
 | No cover art when away from home | Requires integration 1.3.0+, artwork is proxied through HA |
 | Search field missing | Requires Home Assistant 2025.5 or newer |
-| Mute / announce do nothing | Requires MusicFlow server 1.7.x (V2) or newer |
+| Mute / announce do nothing | Requires MusicFlow server 1.7.x or newer |
 
 Enable debug logging:
 
