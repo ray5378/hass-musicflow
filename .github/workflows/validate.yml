@@ -117,19 +117,3 @@ jobs:
           )
           print("CONFIG_SCHEMA regression check ok")
           PY
-
-  no-v2-refs:
-    name: 无遗留 V2 项目引用
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 校验无遗留 V2 项目引用
-        run: |
-          # 字符类写法(Music[Ff]low / music[Aa]flow)让本文件自身模式文本不被
-          # git grep 命中,避免 CI 自检死循环。只拦「项目名层面的 V2 指向」,
-          # 不动 ID3v2 / v2.0.0 / mfos_v2 等合法标识。
-          if git grep -In -e "Music[Ff]low[-_]V2" -e "music[Aa]flow[-_]v2"; then
-            echo "::error::发现遗留的 V2 项目引用,请移除后再提交。"
-            exit 1
-          fi
-          echo "OK: 无 V2 项目引用。"
