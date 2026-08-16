@@ -11,6 +11,8 @@ Every DLNA renderer and every sync group managed by MusicFlow becomes a native
 Home Assistant `media_player` entity, with real-time state over WebSocket.
 
 > Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
+>
+> **Note:** MusicFlow 主仓库 (ray5378/MusicFlow) 现已托管 **V2**（插件化版）；V1 MVP 已归档至 `V1-backup` 分支。
 
 [![Open your Home Assistant instance and open this repository inside HACS.][my-badge]][my-link]
 
@@ -44,8 +46,8 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 
 | Integration | MusicFlow server | Home Assistant |
 |---|---|---|
-| **1.3.7** | **1.1.21** or newer | 2024.12 or newer |
-| 1.3.0+ | 1.1.7 or newer | 2024.12 or newer |
+| **1.3.7** | **1.7.x (V2)** or newer | 2024.12 or newer |
+| 1.3.0+ | 1.7.x (V2) or newer | 2024.12 or newer |
 
 The card [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card)
 **v1.6.27** is the tested companion (server **v1.1.21** + integration **1.3.7** +
@@ -56,9 +58,9 @@ Notes:
 - The in-library **search box** needs Home Assistant **2025.5** or newer. On older
   cores everything else still works, only the search field is hidden.
 - Mute, announce (TTS), source select and the richer track metadata need
-  MusicFlow server **1.1.7** or newer.
+  MusicFlow server **1.7.x (V2)** or newer.
 - Not sure which server version you run? Open `http://<musicflow-host>/ping`.
-  It returns `{"status":"ok","version":"1.1.7"}`.
+  It returns `{"status":"ok","version":"1.7.x"}`.
 
 This integration pulls in **no extra Python dependencies**. The WebSocket client
 reuses the aiohttp session that Home Assistant already ships.
