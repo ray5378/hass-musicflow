@@ -22,6 +22,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: README must be valid UTF-8 (no BOM, decodes cleanly)
+        # HACS 2.x renders README.md directly. A valid UTF-8 file with Chinese
+        # displays fine (see banto6/haier). The real failure mode is a corrupted
+        # encoding (non-UTF-8 bytes / stray BOM), which we reject here.
+        run: |
+          python3 - <<'EOF'
+          import sys
+          with open("README.md", "rb") as f:
+              data = f.read()
+          if data[:3] == b"\xef\xbb\xbf":
+              print("README.md starts with a UTF-8 BOM - HACS/GitHub render it as a stray character. Remove the BOM.")
+              sys.exit(1)
+          try:
+              data.decode("utf-8")
+          except UnicodeDecodeError as e:
+              print("README.md is not valid UTF-8 (HACS renders garbage / breaks parsing):", e)
+              sys.exit(1)
+          print("README.md is valid UTF-8")
+          EOF
       - uses: hacs/action@main
         with:
           category: integration

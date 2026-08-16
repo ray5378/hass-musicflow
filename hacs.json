@@ -1,5 +1,6 @@
 {
   "name": "MusicFlow",
+  "render_readme": true,
   "content_in_root": false,
   "homeassistant": "2024.12.0"
 }
