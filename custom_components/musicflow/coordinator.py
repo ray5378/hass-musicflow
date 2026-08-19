@@ -14,6 +14,10 @@
 group 的实时性单独处理:组状态派生自 leader 设备,而 leader 只会以自己的
 device_id 发 player_state_changed。所以这里维护 device → group 的反向索引,
 收到成员设备状态变化时防抖拉一次 `/v1/peers/group:<id>/status`。
+
+airplay peer 与 dlna peer 同构:队列/媒体事件(media_changed / queue_changed)
+由 QueueController 以裸 AirPlay 设备 id 推送,这里同时映射 `dlna:` 与
+`airplay:` 两个命名空间。传输状态(PLAYING/PAUSED)没有独立事件,靠轮询。
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError
 from .const import (
     CONTROLLABLE_KINDS,
     DOMAIN,
+    PEER_KIND_AIRPLAY,
     PEER_KIND_DLNA,
     PEER_KIND_GROUP,
     POLL_INTERVAL_SECONDS,
@@ -72,7 +77,7 @@ class PeerState:
 
     @property
     def raw_id(self) -> str:
-        """去掉 `dlna:` / `group:` 前缀的裸 id。"""
+        """去掉 `dlna:` / `group:` / `airplay:` 前缀的裸 id。"""
         _, _, rest = self.peer_id.partition(":")
         return rest or self.peer_id
 
@@ -345,14 +350,16 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
                 msg.get("device_id"), {"media": media} if media else None
             )
         elif msg_type == "queue_changed":
-            # QueueController 的 key 对 dlna 是 deviceId、对 group 是 groupId,
-            # 事件字段统一叫 device_id,所以两个命名空间都试一下。
+            # QueueController 的 key 对 dlna 是 deviceId、对 group 是 groupId、
+            # 对 airplay 是 AirPlay 设备 id,事件字段统一叫 device_id,
+            # 所以三个命名空间都试一下。
             raw_id = msg.get("device_id")
             queue = msg.get("queue")
             changed = any(
                 (
                     self._apply_queue(f"{PEER_KIND_DLNA}:{raw_id}", queue, strict=True),
                     self._apply_queue(f"{PEER_KIND_GROUP}:{raw_id}", queue, strict=True),
+                    self._apply_queue(f"{PEER_KIND_AIRPLAY}:{raw_id}", queue, strict=True),
                 )
             )
         elif msg_type in ("device_list_changed", "group_changed", "group_deleted"):
@@ -426,7 +433,11 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
     def _apply_device_status(self, device_id: Any, status: Any) -> bool:
         if not isinstance(device_id, str) or not isinstance(status, dict):
             return False
+        # player_state_changed / media_changed 的 device_id 是裸 id(不含前缀)。
+        # dlna 与 airplay 是两套命名空间,都试一下(队列 key 见 QueueController)。
         state = self.peers.get(f"{PEER_KIND_DLNA}:{device_id}")
+        if state is None:
+            state = self.peers.get(f"{PEER_KIND_AIRPLAY}:{device_id}")
         if state is None:
             return False
         state.apply_status(status)

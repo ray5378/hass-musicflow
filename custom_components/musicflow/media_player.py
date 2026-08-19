@@ -2,6 +2,7 @@
 
 每个"可控 peer"对应一个实体:
   - `dlna:<deviceId>` → 一台 DLNA 渲染器
+  - `airplay:<deviceId>` → 一台 AirPlay 设备
   - `group:<groupId>` → 一个播放器组
 
 `local:<userId>`(Web 客户端本地播放)不建实体 —— 它的音频跑在浏览器 Howl 里,
@@ -54,6 +55,7 @@ from .const import (
     ATTR_START_INDEX,
     DOMAIN,
     MEDIA_URI_PREFIX,
+    PEER_KIND_AIRPLAY,
     PEER_KIND_DLNA,
     PEER_KIND_GROUP,
     PLAY_MODES,
@@ -252,11 +254,16 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
     def device_info(self) -> DeviceInfo:
         peer = self._peer
         is_group = peer is not None and peer.kind == PEER_KIND_GROUP
+        is_airplay = peer is not None and peer.kind == PEER_KIND_AIRPLAY
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}:{self.peer_id}")},
             name=peer.name if peer else self.peer_id,
             manufacturer="MusicFlow",
-            model="播放器组" if is_group else "DLNA 渲染器",
+            model=(
+                "播放器组"
+                if is_group
+                else "AirPlay 播放器" if is_airplay else "DLNA 渲染器"
+            ),
             via_device=(DOMAIN, self._entry.entry_id),
         )
 
