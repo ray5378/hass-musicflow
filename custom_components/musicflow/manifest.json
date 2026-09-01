@@ -9,6 +9,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/ray5378/hass-musicflow/issues",
   "requirements": [],
-  "version": "1.3.9",
+  "version": "1.3.10",
   "zeroconf": ["_musicflow._tcp.local."]
 }
