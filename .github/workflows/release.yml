@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify manifest version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION="$(python3 -c 'import json;print(json.load(open("custom_components/musicflow/manifest.json"))["version"])')"
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match manifest version ${MANIFEST_VERSION}"
+            exit 1
+          fi
+          echo "manifest version ${MANIFEST_VERSION} matches tag ${GITHUB_REF_NAME}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            ## MusicFlow Home Assistant integration — ${{ github.ref_name }}
+
+            Install/update via HACS (MusicFlow custom repository).
+          draft: false
+          prerelease: false
