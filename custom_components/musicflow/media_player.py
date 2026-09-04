@@ -128,24 +128,43 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """建立实体,并在后端发现新设备/新组时动态补建。"""
+    """建立实体,并按后端 peer 集合(以 /v1/peers 为准)做增删剪枝。
+
+    后端隐藏/移除某 peer 后 /v1/peers 不再返回它,coordinator 也会同步把它从
+    self.peers 里清掉(WS 与轮询均已按 /v1/peers 过滤)。这里监听 coordinator,
+    一旦某个已建实体的 peer 从集合里消失,就把它从 HA 移除(剪枝);peer 重新出现
+    (比如解除隐藏)时会再次补建。
+    """
     coordinator: MusicFlowCoordinator = hass.data[DOMAIN][entry.entry_id]
-    known: set[str] = set()
+    entities: dict[str, MusicFlowMediaPlayer] = {}
 
     @callback
-    def _async_add_new_peers() -> None:
-        new_entities = [
-            MusicFlowMediaPlayer(coordinator, entry, peer.peer_id)
-            for peer in coordinator.controllable_peers()
-            if peer.peer_id not in known
-        ]
-        if not new_entities:
-            return
-        known.update(e.peer_id for e in new_entities)
-        async_add_entities(new_entities)
+    def _async_sync_peers() -> None:
+        # 当前 /v1/peers(经 coordinator 聚合后)的可控 peer 集合
+        current = {peer.peer_id for peer in coordinator.controllable_peers()}
 
-    _async_add_new_peers()
-    entry.async_on_unload(coordinator.async_add_listener(_async_add_new_peers))
+        # 1) 已消失(隐藏/删除)的 peer -> 移除对应 HA 实体
+        vanished = [pid for pid in entities if pid not in current]
+        for pid in vanished:
+            entity = entities.pop(pid)
+            # 尚未完成注册的实体没有 entity_id,async_remove 会失败,跳过即可
+            if entity.entity_id is None:
+                continue
+            hass.async_create_task(entity.async_remove())
+
+        # 2) 新出现 / 恢复显示的 peer -> 补建实体
+        new_entities = [
+            MusicFlowMediaPlayer(coordinator, entry, pid)
+            for pid in current
+            if pid not in entities
+        ]
+        for emp in new_entities:
+            entities[emp.peer_id] = emp
+        if new_entities:
+            async_add_entities(new_entities)
+
+    _async_sync_peers()
+    entry.async_on_unload(coordinator.async_add_listener(_async_sync_peers))
 
     # ---- 自定义服务(暴露后端特有能力:按内容类型点播 / 播放模式 / 清空队列)----
     platform = entity_platform.async_get_current_platform()
