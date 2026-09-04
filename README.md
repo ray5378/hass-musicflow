@@ -222,6 +222,15 @@ logger:
 
 ---
 
+## 国际化（i18n）
+
+集成面向用户文案接入 HASS 前端多语言，**随 HA 界面语言自动切换**（zh-Hans / en，默认中文，无手动切换入口）：
+
+- **配置流 / 服务**：`strings.json` + `translations/zh-Hans.json` + `en.json`——config flow（user / zeroconf_confirm / reauth_confirm）与自定义服务（play_content / set_play_mode / clear_queue）的 title / description / fields 均已本地化。
+- **用户可见异常**：`media_player.py` 12 处 + `browse_media.py` 1 处 `HomeAssistantError` / `BrowseError` 全部改 HASS `exceptions` 机制（`translation_domain + translation_key + placeholders`），共 13 键，zh-Hans / en 完全对齐（hassfest 校验，缺失即红）。
+- **边界**：媒体浏览器动态标题（`BrowseMedia.title`）与设备 model 无 HASS 标准本地化机制，保持中文默认。
+- **新增要求**：任何新用户可见文案必须同时补 zh-Hans 与 en 两个翻译文件，键集合一致，禁止硬编码中文。
+
 ## 相关仓库
 
 | 仓库 | 作用 |
