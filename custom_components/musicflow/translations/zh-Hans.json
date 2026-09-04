@@ -81,5 +81,46 @@
       "name": "清空队列",
       "description": "移除播放器队列中的全部曲目。"
     }
+  },
+  "exceptions": {
+    "no_current_song": {
+      "message": "当前没有正在播放的歌曲。"
+    },
+    "update_like_failed": {
+      "message": "更新喜欢失败: {error}"
+    },
+    "no_current_song_for_playlist": {
+      "message": "当前没有正在播放的歌曲,也没有指定 song_ids。"
+    },
+    "add_to_playlist_failed": {
+      "message": "添加到歌单失败: {error}"
+    },
+    "unsupported_media": {
+      "message": "不支持播放 {media_id}"
+    },
+    "unsupported_media_type": {
+      "message": "不支持的媒体类型 {media_type},可用: {available}"
+    },
+    "no_available_player": {
+      "message": "找不到可用的播放器「{player}」。"
+    },
+    "no_transferable_queue": {
+      "message": "当前没有可转移的播放队列。"
+    },
+    "fetch_queue_failed": {
+      "message": "拉取播放队列失败: {error}"
+    },
+    "transfer_failed": {
+      "message": "转移播放失败: {error}"
+    },
+    "browse_failed": {
+      "message": "浏览曲库失败: {error}"
+    },
+    "search_failed": {
+      "message": "搜索失败: {error}"
+    },
+    "cannot_browse": {
+      "message": "无法浏览 {media_content_id}"
+    }
   }
 }

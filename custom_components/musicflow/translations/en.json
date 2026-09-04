@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to MusicFlow",
-        "description": "Enter your MusicFlow server address and API key. The API key can be created in MusicFlow under Settings \u2192 Account.",
+        "description": "Enter your MusicFlow server address and API key. The API key can be created in MusicFlow under Settings → Account.",
         "data": {
           "url": "Server address",
           "api_key": "API key",
@@ -80,6 +80,47 @@
     "clear_queue": {
       "name": "Clear queue",
       "description": "Remove all tracks from the player queue."
+    }
+  },
+  "exceptions": {
+    "no_current_song": {
+      "message": "No song is currently playing."
+    },
+    "update_like_failed": {
+      "message": "Failed to update like status: {error}"
+    },
+    "no_current_song_for_playlist": {
+      "message": "No song is currently playing and no song_ids were provided."
+    },
+    "add_to_playlist_failed": {
+      "message": "Failed to add to playlist: {error}"
+    },
+    "unsupported_media": {
+      "message": "Cannot play {media_id}"
+    },
+    "unsupported_media_type": {
+      "message": "Unsupported media type {media_type}; available: {available}"
+    },
+    "no_available_player": {
+      "message": "Cannot find the player \"{player}\"."
+    },
+    "no_transferable_queue": {
+      "message": "There is no play queue to transfer."
+    },
+    "fetch_queue_failed": {
+      "message": "Failed to fetch the play queue: {error}"
+    },
+    "transfer_failed": {
+      "message": "Failed to transfer playback: {error}"
+    },
+    "browse_failed": {
+      "message": "Failed to browse the library: {error}"
+    },
+    "search_failed": {
+      "message": "Failed to search: {error}"
+    },
+    "cannot_browse": {
+      "message": "Cannot browse {media_content_id}"
     }
   }
 }

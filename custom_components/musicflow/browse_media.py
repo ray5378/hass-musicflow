@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - 旧版 HA 没有 SearchMedia
     SearchMedia = None
 
 from .api import MusicFlowClient
-from .const import BROWSE_LIMIT, MEDIA_URI_PREFIX
+from .const import BROWSE_LIMIT, DOMAIN, MEDIA_URI_PREFIX
 
 ROOT_ID = MEDIA_URI_PREFIX
 
@@ -91,7 +91,11 @@ async def build_browse_media(
     if kind == "genre" and value:
         return await _browse_genre(client, thumb, value)
 
-    raise BrowseError(f"无法浏览 {media_content_id}")
+    raise BrowseError(
+        translation_domain=DOMAIN,
+        translation_key="cannot_browse",
+        translation_placeholders={"media_content_id": media_content_id},
+    )
 
 
 # ==================== 根菜单 ====================

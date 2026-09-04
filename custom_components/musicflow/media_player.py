@@ -530,7 +530,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         item = self._current_item
         song_id = str(item.get("songId")) if item and item.get("songId") else None
         if not song_id:
-            raise HomeAssistantError("当前没有正在播放的歌曲")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="no_current_song"
+            )
         should_like = liked if liked is not None else song_id not in self.coordinator.starred
         try:
             if should_like:
@@ -538,7 +540,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             else:
                 await self.coordinator.client.async_unstar([song_id])
         except MusicFlowError as err:
-            raise HomeAssistantError(f"更新喜欢失败: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="update_like_failed", translation_placeholders={"error": str(err)}
+            ) from err
         await self.coordinator.async_request_refresh()
 
     async def async_add_to_playlist(
@@ -549,11 +553,15 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         cur = str(item.get("songId")) if item and item.get("songId") else None
         targets = song_ids or ([cur] if cur else [])
         if not targets:
-            raise HomeAssistantError("当前没有正在播放的歌曲,也没有指定 song_ids")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="no_current_song_for_playlist"
+            )
         try:
             await self.coordinator.client.async_add_to_playlist(playlist_id, targets)
         except MusicFlowError as err:
-            raise HomeAssistantError(f"添加到歌单失败: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="add_to_playlist_failed", translation_placeholders={"error": str(err)}
+            ) from err
         await self.coordinator.async_request_refresh()
 
     async def async_set_shuffle(self, shuffle: bool) -> None:
@@ -612,14 +620,21 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
                 return kind, value
             if kind == "track" and value:
                 return "song", value
-            raise HomeAssistantError(f"不支持播放 {media_id}")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="unsupported_media", translation_placeholders={"media_id": media_id}
+            )
 
         # 直接调用 media_player.play_media 时:media_content_type 决定类型
         normalized = {"track": "song", "music": "song"}.get(media_type, media_type)
         if normalized in PLAYABLE_TYPES:
             return normalized, media_id
         raise HomeAssistantError(
-            f"不支持的媒体类型 {media_type},可用: {', '.join(PLAYABLE_TYPES)}"
+            translation_domain=DOMAIN,
+            translation_key="unsupported_media_type",
+            translation_placeholders={
+            "media_type": media_type,
+            "available": ", ".join(PLAYABLE_TYPES),
+            },
         )
 
     async def async_play_content(
@@ -672,10 +687,14 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             None,
         )
         if target is None:
-            raise HomeAssistantError(f"找不到可用的播放器「{source}」")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="no_available_player", translation_placeholders={"player": source}
+            )
         snapshot = await self._playback_snapshot()
         if snapshot is None:
-            raise HomeAssistantError("当前没有可转移的播放队列")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="no_transferable_queue"
+            )
         await self._transfer_playback(
             target.peer_id, snapshot, source_peer_id=self._control_peer_id, stop_source=True
         )
@@ -705,7 +724,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
                     fetched += len(batch)
                 total = page.get("total") or len(items)
             except Exception as err:  # noqa: BLE001 - 转移失败要有明确提示
-                raise HomeAssistantError(f"拉取播放队列失败: {err}") from err
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="fetch_queue_failed", translation_placeholders={"error": str(err)}
+                ) from err
         if not items:
             return None
         index = queue.get("currentIndex")
@@ -748,7 +769,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             if not snapshot.get("playing"):
                 await client.async_pause(target_peer_id)
         except MusicFlowError as err:
-            raise HomeAssistantError(f"转移播放失败: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="transfer_failed", translation_placeholders={"error": str(err)}
+            ) from err
 
     # ==================== 媒体浏览 ====================
     def _thumbnail(
@@ -787,7 +810,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
                 self.coordinator.client, media_content_id, thumb=self._thumbnail
             )
         except MusicFlowError as err:
-            raise HomeAssistantError(f"浏览曲库失败: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="browse_failed", translation_placeholders={"error": str(err)}
+            ) from err
 
     async def async_search_media(
         self, query: SearchMediaQuery, *args, **kwargs
@@ -803,4 +828,6 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
                 self.coordinator.client, search_query, 50, thumb=self._thumbnail
             )
         except MusicFlowError as err:
-            raise HomeAssistantError(f"搜索失败: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="search_failed", translation_placeholders={"error": str(err)}
+            ) from err
