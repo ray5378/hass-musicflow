@@ -1,4 +1,8 @@
 play_content:
+  name: 播放内容
+  description: >-
+    让指定播放器播放一个歌单 / 专辑 / 艺术家 / 流派 / 单曲。
+    起点定位优先用 song_id（按歌曲身份定位，与排序无关）；不传时退回 start_index（行号）。
   target:
     entity:
       integration: musicflow
@@ -20,7 +24,17 @@ play_content:
       example: "3f1c2b8a-..."
       selector:
         text:
+    song_id:
+      description: >-
+        从这个内容里哪首歌开始播（歌曲 id）。按身份定位，与前后端排序无关，
+        是**推荐的起点指定方式**。该曲不在解析出的队列里时服务端返回 404。
+      example: "8a2f0c91-..."
+      selector:
+        text:
     start_index:
+      description: >-
+        从这个内容里第几行开始播（从 0 计数）。行号依赖队列排序序，
+        前后端排序不同源时可能播错歌；仅在无法提供 song_id 时使用。
       default: 0
       selector:
         number:
@@ -28,6 +42,7 @@ play_content:
           max: 9999
           mode: box
     play_mode:
+      description: 起播时同时设定的播放模式（order 顺序 / one 单曲 / all 列表循环 / shuffle 随机）。
       selector:
         select:
           options:
@@ -36,6 +51,7 @@ play_content:
             - all
             - shuffle
     enqueue:
+      description: true 时把内容追加到现有队列末尾，而不是替换当前队列。
       default: false
       selector:
         boolean:

@@ -69,6 +69,7 @@ SERVICE_ADD_TO_PLAYLIST: Final = "add_to_playlist"
 
 ATTR_CONTENT_TYPE: Final = "content_type"
 ATTR_CONTENT_ID: Final = "content_id"
+ATTR_SONG_ID: Final = "song_id"
 ATTR_START_INDEX: Final = "start_index"
 ATTR_PLAY_MODE: Final = "play_mode"
 ATTR_ENQUEUE: Final = "enqueue"

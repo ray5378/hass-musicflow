@@ -52,6 +52,7 @@ from .const import (
     ATTR_PLAY_MODE,
     ATTR_PLAYLIST_ID,
     ATTR_SONG_IDS,
+    ATTR_SONG_ID,
     ATTR_START_INDEX,
     DOMAIN,
     MEDIA_URI_PREFIX,
@@ -173,6 +174,7 @@ async def async_setup_entry(
         {
             vol.Required(ATTR_CONTENT_TYPE): vol.In(PLAYABLE_TYPES),
             vol.Required(ATTR_CONTENT_ID): cv.string,
+            vol.Optional(ATTR_SONG_ID): cv.string,
             vol.Optional(ATTR_START_INDEX, default=0): vol.Coerce(int),
             vol.Optional(ATTR_PLAY_MODE): vol.In(PLAY_MODES),
             vol.Optional(ATTR_ENQUEUE, default=False): cv.boolean,
@@ -644,14 +646,20 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         start_index: int = 0,
         play_mode: str | None = None,
         enqueue: bool = False,
+        song_id: str | None = None,
     ) -> None:
-        """`musicflow.play_content` 服务实现,也是 play_media 的落点。"""
+        """`musicflow.play_content` 服务实现,也是 play_media 的落点。
+
+        [song_id] 为身份起点(推荐):在内容解析出的队列里按身份定位,
+        与两侧排序无关;未命中后端返 404。未给则退回 [start_index] 行号语义。
+        """
         self._soft_off = False
         await self._call(
             self.coordinator.client.async_play_content(
                 self._control_peer_id,
                 content_type,
                 content_id,
+                song_id=song_id,
                 start_index=start_index,
                 play_mode=play_mode,
                 enqueue=enqueue,

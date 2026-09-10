@@ -243,6 +243,7 @@ class MusicFlowClient:
         content_type: str,
         content_id: str,
         *,
+        song_id: str | None = None,
         start_index: int = 0,
         play_mode: str | None = None,
         enqueue: bool = False,
@@ -251,14 +252,25 @@ class MusicFlowClient:
 
         队列构造、mime 推断、封面回退全在后端 services/content.ts 里,集成侧
         不重复实现,避免和主仓库漂移。
+
+        起点定位**优先用 song_id(身份)**,而不是 start_index(行号):
+        集成侧拿到的行号来自 HA 浏览树的渲染序,后端解析队列用的是自己的
+        SQL 排序序,两者不同源 → 指定非 0 起点时会**静默播错歌**。
+        song_id 走 `findIndex(songId)` 定位,与两侧排序无关。
+        start_index 仅在调用方未给 song_id 时下发(兼容旧用法)。
+        后端 song_id 未命中会返 404,由调用方决定是否回退。
         """
         body: dict[str, Any] = {
             "peerId": peer_id,
             "type": content_type,
             "id": content_id,
-            "startIndex": start_index,
             "enqueue": enqueue,
         }
+        # 二选一:有身份就不发行号,避免后端在"身份命中"与"行号"之间产生歧义。
+        if song_id:
+            body["songId"] = song_id
+        else:
+            body["startIndex"] = start_index
         if play_mode:
             body["playMode"] = play_mode
         data = await self._request("POST", f"{API_PREFIX}/play", json_body=body)
