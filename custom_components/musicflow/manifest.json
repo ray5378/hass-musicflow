@@ -1,14 +1,22 @@
 {
   "domain": "musicflow",
   "name": "MusicFlow",
-  "codeowners": ["@ray5378"],
+  "codeowners": [
+    "@ray5378"
+  ],
   "config_flow": true,
-  "dependencies": ["http", "media_source", "websocket_api"],
+  "dependencies": [
+    "http",
+    "media_source",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/ray5378/hass-musicflow",
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/ray5378/hass-musicflow/issues",
   "requirements": [],
-  "version": "1.5.0",
-  "zeroconf": ["_musicflow._tcp.local."]
+  "version": "2.0.0",
+  "zeroconf": [
+    "_musicflow._tcp.local."
+  ]
 }

@@ -56,9 +56,10 @@ PEER_KIND_LOCAL: Final = "local"
 PEER_KIND_DLNA: Final = "dlna"
 PEER_KIND_GROUP: Final = "group"
 PEER_KIND_AIRPLAY: Final = "airplay"
-# 只有 dlna / group / airplay 由后端驱动音频,能被 HA 控制;
+PEER_KIND_SENDSPIN: Final = "sendspin"
+# 只有 dlna / group / airplay / sendspin 由后端驱动音频,能被 HA 控制;
 # local peer 的音频跑在浏览器里,后端只存队列,不建实体。
-CONTROLLABLE_KINDS: Final = (PEER_KIND_DLNA, PEER_KIND_GROUP, PEER_KIND_AIRPLAY)
+CONTROLLABLE_KINDS: Final = (PEER_KIND_DLNA, PEER_KIND_GROUP, PEER_KIND_AIRPLAY, PEER_KIND_SENDSPIN)
 
 # ==================== 自定义服务 ====================
 SERVICE_PLAY_CONTENT: Final = "play_content"

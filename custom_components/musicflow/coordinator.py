@@ -18,6 +18,10 @@ device_id 发 player_state_changed。所以这里维护 device → group 的反�
 airplay peer 与 dlna peer 同构:队列/媒体事件(media_changed / queue_changed)
 由 QueueController 以裸 AirPlay 设备 id 推送,这里同时映射 `dlna:` 与
 `airplay:` 两个命名空间。传输状态(PLAYING/PAUSED)没有独立事件,靠轮询。
+
+sendspin peer 同理:以裸 clientId 推送 queue_changed(播歌/切歌/清空),
+media_changed 只在清队列时推送(undefined),传输状态靠轮询。这里同时映射
+`sendspin:` 命名空间。
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ from .const import (
     PEER_KIND_AIRPLAY,
     PEER_KIND_DLNA,
     PEER_KIND_GROUP,
+    PEER_KIND_SENDSPIN,
     POLL_INTERVAL_SECONDS,
     WS_RECONNECT_MAX,
     WS_RECONNECT_MIN,
@@ -351,8 +356,8 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             )
         elif msg_type == "queue_changed":
             # QueueController 的 key 对 dlna 是 deviceId、对 group 是 groupId、
-            # 对 airplay 是 AirPlay 设备 id,事件字段统一叫 device_id,
-            # 所以三个命名空间都试一下。
+            # 对 airplay 是 AirPlay 设备 id、对 sendspin 是 clientId,
+            # 事件字段统一叫 device_id,所以四个命名空间都试一下。
             raw_id = msg.get("device_id")
             queue = msg.get("queue")
             changed = any(
@@ -360,6 +365,7 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
                     self._apply_queue(f"{PEER_KIND_DLNA}:{raw_id}", queue, strict=True),
                     self._apply_queue(f"{PEER_KIND_GROUP}:{raw_id}", queue, strict=True),
                     self._apply_queue(f"{PEER_KIND_AIRPLAY}:{raw_id}", queue, strict=True),
+                    self._apply_queue(f"{PEER_KIND_SENDSPIN}:{raw_id}", queue, strict=True),
                 )
             )
         elif msg_type in ("device_list_changed", "group_changed", "group_deleted"):
@@ -434,10 +440,12 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
         if not isinstance(device_id, str) or not isinstance(status, dict):
             return False
         # player_state_changed / media_changed 的 device_id 是裸 id(不含前缀)。
-        # dlna 与 airplay 是两套命名空间,都试一下(队列 key 见 QueueController)。
+        # dlna / airplay / sendspin 各自是独立命名空间,都试一下(队列 key 见 QueueController)。
         state = self.peers.get(f"{PEER_KIND_DLNA}:{device_id}")
         if state is None:
             state = self.peers.get(f"{PEER_KIND_AIRPLAY}:{device_id}")
+        if state is None:
+            state = self.peers.get(f"{PEER_KIND_SENDSPIN}:{device_id}")
         if state is None:
             return False
         state.apply_status(status)

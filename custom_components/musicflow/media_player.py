@@ -3,6 +3,7 @@
 每个"可控 peer"对应一个实体:
   - `dlna:<deviceId>` → 一台 DLNA 渲染器
   - `airplay:<deviceId>` → 一台 AirPlay 设备
+  - `sendspin:<clientId>` → 一个 Sendspin 客户端
   - `group:<groupId>` → 一个播放器组
 
 `local:<userId>`(Web 客户端本地播放)不建实体 —— 它的音频跑在浏览器 Howl 里,
@@ -59,6 +60,7 @@ from .const import (
     PEER_KIND_AIRPLAY,
     PEER_KIND_DLNA,
     PEER_KIND_GROUP,
+    PEER_KIND_SENDSPIN,
     PLAY_MODES,
     PLAYABLE_TYPES,
     SERVICE_ADD_TO_PLAYLIST,
@@ -276,6 +278,7 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         peer = self._peer
         is_group = peer is not None and peer.kind == PEER_KIND_GROUP
         is_airplay = peer is not None and peer.kind == PEER_KIND_AIRPLAY
+        is_sendspin = peer is not None and peer.kind == PEER_KIND_SENDSPIN
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}:{self.peer_id}")},
             name=peer.name if peer else self.peer_id,
@@ -283,7 +286,9 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             model=(
                 "播放器组"
                 if is_group
-                else "AirPlay 播放器" if is_airplay else "DLNA 渲染器"
+                else "AirPlay 播放器"
+                if is_airplay
+                else "Sendspin 播放器" if is_sendspin else "DLNA 渲染器"
             ),
             via_device=(DOMAIN, self._entry.entry_id),
         )
