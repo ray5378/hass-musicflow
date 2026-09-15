@@ -1,0 +1,84 @@
+name: Client Link Guard
+
+# 客户端本机实例（安卓 / Windows）链路守卫（blocking）。
+#
+# HA 集成对「播放端」的建模经历过一次升级：早期 `local` 只表示「Web 浏览器本机播放」
+# （音频跑在浏览器 Howl 里，后端只存队列，HA 发命令过去不会有声音），因此不建实体。
+# 现在 `local` 同时涵盖**安卓 / Windows 客户端实例** —— 它们是真实可遥控的播放端，
+# 必须建实体。coordinator.py 的 `controllable` 已按 `platform != "web"` 放行。
+#
+# 风险在于：**模块 docstring 与 const.py 的注释至今仍写着「local 不建实体」**
+# （media_player.py 顶部、const.py CONTROLLABLE_KINDS 上方）。后来者照注释"修正"
+# 代码，就会把客户端实例从 HA 里摘掉 —— 而这件事不会让任何测试变红，只会表现为
+# 「HA 里突然看不到客户端了」。所以必须钉死。
+#
+# 其余守卫锁定端点前缀与控制面完整度，防止有人改一半（前缀漂移 / 漏端点）。
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: client-link-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  client-link-guard:
+    name: client link guard (blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Syntax check (compileall)
+        run: python -m compileall -q custom_components/musicflow
+
+      # 核心契约：客户端实例（local 且非 web）必须建实体。
+      # 注意注释与代码当前是「矛盾」的（注释说 local 不建实体），以代码为准。
+      - name: "Guard - 客户端实例纳入 HA 可控实体"
+        shell: bash
+        run: |
+          miss=0
+          if ! grep -q 'return self.platform != "web"' custom_components/musicflow/coordinator.py; then
+            echo "::error::客户端链路回归:PeerState.controllable 必须放行 local 且 platform != \"web\" 的客户端实例(安卓/Windows)"
+            miss=1
+          fi
+          # 反向:不得把 local 塞进 CONTROLLABLE_KINDS —— 那会让 web 实例也被建成实体
+          if grep -q 'CONTROLLABLE_KINDS: Final = ([^)]*PEER_KIND_LOCAL' custom_components/musicflow/const.py; then
+            echo "::error::客户端链路回归:CONTROLLABLE_KINDS 不得包含 local(会把 Web 实例也建成实体);客户端实例走 platform != \"web\" 判定"
+            miss=1
+          fi
+          if ! grep -q 'PEER_KIND_LOCAL' custom_components/musicflow/coordinator.py; then
+            echo "::error::客户端链路回归:coordinator.py 必须显式处理 PEER_KIND_LOCAL"
+            miss=1
+          fi
+          if [ "$miss" -eq 0 ]; then echo "OK: 客户端实例纳入可控实体"; fi
+          exit "$miss"
+
+      # 端点前缀 + 控制面完整度。
+      - name: "Guard - 内部 REST 前缀与 peer 控制端点"
+        shell: bash
+        run: |
+          miss=0
+          if ! grep -q 'API_PREFIX: Final = "/rest/api/v1"' custom_components/musicflow/const.py; then
+            echo "::error::客户端链路回归:const.API_PREFIX 必须是 /rest/api/v1(与后端 app.route(\"/rest/api\", apiRoutes) 对齐)"
+            miss=1
+          fi
+          api=custom_components/musicflow/api.py
+          for ep in play pause stop next prev seek volume play-mode; do
+            if ! grep -q "/$ep\"" "$api" && ! grep -q "/$ep'," "$api" && ! grep -q "f\"/peers/{self._encode(peer_id)}/$ep\"" "$api"; then
+              echo "::error::控制面回归:api.py 缺少 /peers/:peerId/$ep"
+              miss=1
+            fi
+          done
+          if [ "$miss" -eq 0 ]; then echo "OK: API 前缀与 peer 控制端点在位"; fi
+          exit "$miss"
