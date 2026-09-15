@@ -47,6 +47,7 @@ from .const import (
     PEER_KIND_DLNA,
     PEER_KIND_GROUP,
     PEER_KIND_SENDSPIN,
+    PEER_KIND_LOCAL,
     POLL_INTERVAL_SECONDS,
     WS_RECONNECT_MAX,
     WS_RECONNECT_MIN,
@@ -65,6 +66,7 @@ class PeerState:
     peer_id: str
     kind: str
     name: str
+    platform: str | None = None
     available: bool = False
     queue: dict[str, Any] = field(default_factory=dict)
     status: dict[str, Any] = field(default_factory=dict)
@@ -77,8 +79,13 @@ class PeerState:
 
     @property
     def controllable(self) -> bool:
-        """local peer 的音频跑在浏览器里,HA 控不了,不建实体。"""
-        return self.kind in CONTROLLABLE_KINDS
+        """Web 端只做本机播放+遥控,音频跑在浏览器里 HA 控不了,不建实体;
+        安卓/Windows 客户端是真实可遥控的播放设备,纳入可控实体。"""
+        if self.kind in CONTROLLABLE_KINDS:
+            return True
+        if self.kind == PEER_KIND_LOCAL:
+            return self.platform != "web"
+        return False
 
     @property
     def raw_id(self) -> str:
@@ -136,6 +143,9 @@ class PeerState:
         """合并一条后端 Peer / PeerWithQueue 记录。"""
         self.name = peer.get("name") or self.name
         self.available = bool(peer.get("available"))
+        platform = peer.get("platform")
+        if isinstance(platform, str):
+            self.platform = platform
         queue = peer.get("queue")
         if isinstance(queue, dict):
             self.queue = queue
@@ -242,7 +252,12 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             seen.add(peer_id)
             state = self.peers.get(peer_id)
             if state is None:
-                state = PeerState(peer_id=peer_id, kind=kind, name=peer.get("name") or peer_id)
+                state = PeerState(
+                    peer_id=peer_id,
+                    kind=kind,
+                    name=peer.get("name") or peer_id,
+                    platform=peer.get("platform"),
+                )
                 self.peers[peer_id] = state
             state.apply_peer(peer)
 
@@ -389,7 +404,12 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             seen.add(peer_id)
             state = self.peers.get(peer_id)
             if state is None:
-                state = PeerState(peer_id=peer_id, kind=kind, name=peer.get("name") or peer_id)
+                state = PeerState(
+                    peer_id=peer_id,
+                    kind=kind,
+                    name=peer.get("name") or peer_id,
+                    platform=peer.get("platform"),
+                )
                 self.peers[peer_id] = state
             state.apply_peer(peer)
         for peer_id in list(self.peers):
@@ -407,7 +427,12 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             return False
         state = self.peers.get(peer_id)
         if state is None:
-            state = PeerState(peer_id=peer_id, kind=kind, name=peer.get("name") or peer_id)
+            state = PeerState(
+                peer_id=peer_id,
+                kind=kind,
+                name=peer.get("name") or peer_id,
+                platform=peer.get("platform"),
+            )
             self.peers[peer_id] = state
             # 新 peer:让平台侧有机会补建实体
             self.hass.async_create_task(self.async_request_refresh())

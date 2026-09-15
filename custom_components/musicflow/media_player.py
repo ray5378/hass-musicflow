@@ -61,6 +61,7 @@ from .const import (
     PEER_KIND_DLNA,
     PEER_KIND_GROUP,
     PEER_KIND_SENDSPIN,
+    PEER_KIND_LOCAL,
     PLAY_MODES,
     PLAYABLE_TYPES,
     SERVICE_ADD_TO_PLAYLIST,
@@ -279,17 +280,23 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         is_group = peer is not None and peer.kind == PEER_KIND_GROUP
         is_airplay = peer is not None and peer.kind == PEER_KIND_AIRPLAY
         is_sendspin = peer is not None and peer.kind == PEER_KIND_SENDSPIN
+        is_local = peer is not None and peer.kind == PEER_KIND_LOCAL
+        if is_local:
+            plat = (peer.platform or "").lower()
+            model = f"MusicFlow 客户端 ({plat})" if plat else "MusicFlow 客户端"
+        elif is_group:
+            model = "播放器组"
+        elif is_airplay:
+            model = "AirPlay 播放器"
+        elif is_sendspin:
+            model = "Sendspin 播放器"
+        else:
+            model = "DLNA 渲染器"
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}:{self.peer_id}")},
             name=peer.name if peer else self.peer_id,
             manufacturer="MusicFlow",
-            model=(
-                "播放器组"
-                if is_group
-                else "AirPlay 播放器"
-                if is_airplay
-                else "Sendspin 播放器" if is_sendspin else "DLNA 渲染器"
-            ),
+            model=model,
             via_device=(DOMAIN, self._entry.entry_id),
         )
 

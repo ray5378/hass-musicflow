@@ -35,5 +35,16 @@ jobs:
             ## MusicFlow Home Assistant integration — ${{ github.ref_name }}
 
             Install/update via HACS (MusicFlow custom repository).
+
+            ### 新增
+            - 客户端本机实例（安卓 / Windows，`kind==="local"` 且非 web 平台）现在作为可控
+              `media_player` 实体出现在 Home Assistant 中，与 DLNA / AirPlay / 播放器组并列，
+              可被语音、自动化、脚本直接控制。
+            - `Web` 端仍只做本机播放 + 遥控，不建实体（音频跑在浏览器里，HA 控不了）。
+            - 设备型号信息：客户端实体显示 `MusicFlow 客户端 (android/windows)`，不再误标为 DLNA 渲染器。
+
+            ### 兼容性
+            - 需配合 **MusicFlow 服务端 v3.0.18+** 与 **客户端 v5.0.1+** 使用效果最佳；
+              服务端 `decoratePeersForClient` 已对其它端隐藏 web 行，集成侧再以 `platform !== "web"` 保险一次。
           draft: false
           prerelease: false
