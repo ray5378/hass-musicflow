@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from typing import Any
 
 import voluptuous as vol
@@ -42,6 +43,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .api import MusicFlowError
 from .browse_media import build_browse_media, build_search_results, parse_media_id
@@ -493,7 +495,51 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         await self._call(self.coordinator.client.async_previous(self._control_peer_id))
 
     async def async_media_seek(self, position: float) -> None:
-        await self._call(self.coordinator.client.async_seek(self._control_peer_id, position))
+        # 越界钳制:拖到 99-100% 四舍五入超 duration 会让 DLNA 拒收/跳开头。
+        try:
+            target = float(position)
+        except (TypeError, ValueError):
+            return
+        if target != target:  # NaN
+            return
+        duration = self.media_duration
+        if isinstance(duration, (int, float)) and duration > 0:
+            target = max(0.0, min(target, float(duration)))
+        else:
+            target = max(0.0, target)
+        control = self._control_peer or self._peer
+        # 先起播再 seek:STOPPED/IDLE/TRANSITIONING 下发 Seek 会被部分渲染器静默
+        # 丢弃(「拖后不播」)。PAUSED 允许直接 Seek(保持暂停,不拉起播放);
+        # PLAYING 直接 Seek;其余状态先 play 并等到 PLAYING/PAUSED(5s 超时后仍下发,不卡用户)。
+        if control is not None:
+            raw_state = str((control.status.get("state") or "")).upper()
+            if raw_state not in ("PLAYING", "STARTED", "PAUSED", "PAUSED_PLAYBACK", "PAUSED_RECORDING"):
+                try:
+                    await self.coordinator.client.async_play(control.peer_id)
+                except MusicFlowError as err:
+                    raise HomeAssistantError(str(err)) from err
+                for _ in range(10):
+                    await asyncio.sleep(0.5)
+                    await self.coordinator.async_request_refresh()
+                    control = self._control_peer or self._peer
+                    if control is None:
+                        break
+                    raw_state = str((control.status.get("state") or "")).upper()
+                    if raw_state in ("PLAYING", "STARTED", "PAUSED", "PAUSED_PLAYBACK", "PAUSED_RECORDING"):
+                        break
+        # 乐观双写:控制打组、显示读单机,两边都置 guard,避免刷新读回旧值把进度拽回去。
+        # _call 随后会 refresh,guard 会过滤掉 seek 前采样的旧位置上报。
+        guard_until = dt_util.utcnow() + timedelta(seconds=8)
+        seen: set[int] = set()
+        for peer in (control, self._peer):
+            if peer is None or id(peer) in seen:
+                continue
+            seen.add(id(peer))
+            peer.seek_target = target
+            peer.seek_guard_until = guard_until
+            peer.status["position"] = target
+            peer.status_updated_at = guard_until - timedelta(seconds=8)
+        await self._call(self.coordinator.client.async_seek(self._control_peer_id, target))
 
     async def async_set_volume_level(self, volume: float) -> None:
         # 音量按实体本身走:组实体调全组,成员实体单独调自己那只喇叭

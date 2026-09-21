@@ -76,6 +76,11 @@ class PeerState:
     # 跑 / 进度是几首歌加起来的时间"。换歌瞬间把进度归零并立即重锚。
     last_track_id: str | None = None
     pending_reanchor: bool = False
+    # seek 乐观保护:HA 下发 seek 后、设备实际落位前,用目标值显示并拒绝旧位置
+    # 上报覆盖锚点(否则原生进度条先跳回旧值,几十秒才对齐,WS 又无 position 事件)。
+    # 落位(上报 >= 目标-2s)或 8s 过期即解除。成员/组双端都置(控制打组、显示读单机)。
+    seek_target: float | None = None
+    seek_guard_until: datetime | None = None
 
     @property
     def controllable(self) -> bool:
@@ -125,19 +130,25 @@ class PeerState:
         return None
 
     @property
-    def media_position(self) -> int | None:
+    def media_position(self) -> float | None:
         """HA 标准 media_position:本轨内的播放位置(从 0 起),跨歌不累加。
 
         换歌后的极短窗口(pending_reanchor)直接返回 0,避免旧 position 被 HA 按
         旧锚点插值放大成"几首歌加起来的时间"。后端已保证 position 每轨归零
         (control.ts 按 songId 重置基线),这里只做 HA 合规的归零 + 钳制。
+        seek 保护窗内返回乐观目标值(0.1s 粒度,不再 int 截断丢小数)。
         """
         if self.pending_reanchor:
             return 0
+        if self.seek_target is not None and self.seek_guard_until is not None:
+            if dt_util.utcnow() < self.seek_guard_until:
+                return max(0.0, self.seek_target)
+            self.seek_target = None
+            self.seek_guard_until = None
         raw = self.status.get("position")
         if not isinstance(raw, (int, float)):
             return None
-        return max(0, int(raw))
+        return max(0.0, round(float(raw), 1))
 
     def apply_peer(self, peer: dict[str, Any]) -> None:
         """合并一条后端 Peer / PeerWithQueue 记录。"""
@@ -175,6 +186,15 @@ class PeerState:
             self.status_updated_at = dt_util.utcnow()
 
         if "position" in status and isinstance(status.get("position"), (int, float)):
+            reported = float(status["position"])
+            # seek 保护:上报仍是旧位置(目标-2s 以外)时不覆盖乐观值与锚点;
+            # 落位或过期即解除,恢复正常采样。
+            if self.seek_target is not None and self.seek_guard_until is not None:
+                if dt_util.utcnow() >= self.seek_guard_until or reported >= self.seek_target - 2:
+                    self.seek_target = None
+                    self.seek_guard_until = None
+                else:
+                    return
             updated_at = status.get("updatedAt")
             if isinstance(updated_at, (int, float)) and updated_at > 0:
                 self.status_updated_at = dt_util.utc_from_timestamp(updated_at / 1000)
