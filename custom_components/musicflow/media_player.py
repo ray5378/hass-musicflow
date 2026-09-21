@@ -500,14 +500,32 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
         # NaN/非法输入直接丢弃（纯函数 seek_utils.clamp_seek_target，CI 单测锁定）。
         target = clamp_seek_target(position, self.media_duration)
         if target is None:
+            _LOGGER.debug(
+                "[seek] %s 丢弃非法目标 position=%r duration=%r",
+                self._control_peer_id,
+                position,
+                self.media_duration,
+            )
             return
         control = self._control_peer or self._peer
+        _LOGGER.debug(
+            "[seek] %s 收到 position=%.2f duration=%s 钳制后=%.2f peer_state=%s",
+            self._control_peer_id,
+            float(position),
+            self.media_duration,
+            target,
+            str((control.status.get("state") if control is not None else None) or "-").upper(),
+        )
         # 先起播再 seek:STOPPED/IDLE/TRANSITIONING 下发 Seek 会被部分渲染器静默
         # 丢弃(「拖后不播」)。PAUSED 允许直接 Seek(保持暂停,不拉起播放);
         # PLAYING 直接 Seek;其余状态先 play 并等到 PLAYING/PAUSED(5s 超时后仍下发,不卡用户)。
         if control is not None:
             raw_state = str((control.status.get("state") or "")).upper()
             if raw_state not in ("PLAYING", "STARTED", "PAUSED", "PAUSED_PLAYBACK", "PAUSED_RECORDING"):
+                # STOPPED/IDLE 直接下发 Seek 会被渲染器静默丢弃 —— 这里先起播。
+                # 若用户拖动后设备没响,先看这一行有没有出现;出现了却仍无声,
+                # 说明是起播慢/设备真卡,而不是 seek 被丢。
+                _LOGGER.debug("[seek] %s 状态 %s 不可直接 seek → 先起播再等就绪", self._control_peer_id, raw_state)
                 try:
                     await self.coordinator.client.async_play(control.peer_id)
                 except MusicFlowError as err:
@@ -521,6 +539,7 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
                     raw_state = str((control.status.get("state") or "")).upper()
                     if raw_state in ("PLAYING", "STARTED", "PAUSED", "PAUSED_PLAYBACK", "PAUSED_RECORDING"):
                         break
+                _LOGGER.debug("[seek] %s 起播等待结束 state=%s", self._control_peer_id, raw_state or "-")
         # 乐观双写:控制打组、显示读单机,两边都置 guard,避免刷新读回旧值把进度拽回去。
         # _call 随后会 refresh,guard 会过滤掉 seek 前采样的旧位置上报。
         guard_until = dt_util.utcnow() + timedelta(seconds=SEEK_GUARD_SECONDS)
@@ -533,7 +552,18 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
             peer.seek_guard_until = guard_until
             peer.status["position"] = target
             peer.status_updated_at = guard_until - timedelta(seconds=8)
+        # debug:乐观写与保护窗是「进度不跳回」的关键机制 —— 若拖动后进度确实跳回,
+        # 大概率是本行 guard 没置上(peer 为 None)、或窗口太短被过期后旧上报覆盖。
+        _LOGGER.debug(
+            "[seek] %s 下发 target=%.2f guard=%.1fs 乐观 peer=%d 控制目标=%s",
+            self._control_peer_id,
+            target,
+            SEEK_GUARD_SECONDS,
+            len(seen),
+            self._control_peer_id,
+        )
         await self._call(self.coordinator.client.async_seek(self._control_peer_id, target))
+        _LOGGER.debug("[seek] %s 下发完成 target=%.2f", self._control_peer_id, target)
 
     async def async_set_volume_level(self, volume: float) -> None:
         # 音量按实体本身走:组实体调全组,成员实体单独调自己那只喇叭

@@ -199,7 +199,28 @@ class PeerState:
                     dt_util.utcnow().timestamp(),
                     self.seek_guard_until.timestamp(),
                 ):
+                    # debug:被保护窗挡下的旧位置上报。这一行出现 = 服务端/设备确实
+                    # 把 seek 前的位置推回来了,是「进度跳回」的直接证据;若拖动后
+                    # 进度仍跳回却**没有**这一行,说明保护窗已过期(SEEK_GUARD_SECONDS
+                    # 太短)或本就没置上。
+                    _LOGGER.debug(
+                        "[seek-guard] %s 丢弃旧上报 reported=%.2f < target=%.2f(剩余 %.1fs)",
+                        self.peer_id,
+                        reported,
+                        self.seek_target,
+                        self.seek_guard_until.timestamp() - dt_util.utcnow().timestamp(),
+                    )
                     return
+                # 保护窗结束(落位或过期) —— 落位则 reported 已接近 target;
+                # 若这里 reported 明显小于 target,说明设备最终停在了错误位置,
+                # 属于「拖了没落位」,要看后端 [DLNA][seek] 那一侧。
+                _LOGGER.debug(
+                    "[seek-guard] %s 解除保护 target=%.2f 末次上报=%.2f(差 %.2fs)",
+                    self.peer_id,
+                    self.seek_target,
+                    reported,
+                    self.seek_target - reported,
+                )
                 self.seek_target = None
                 self.seek_guard_until = None
             updated_at = status.get("updatedAt")
