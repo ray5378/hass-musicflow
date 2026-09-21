@@ -1,0 +1,39 @@
+name: Seek Contract
+
+# 拖动进度条（seek）契约守卫（blocking）。
+#
+# 背景：原生进度条「拖后不播/回跳/截断」三连修 —— STOPPED/TRANSITIONING 先起播
+# 再 seek、8s 乐观保护窗、float 位置、目标钳位。判定语义抽在 seek_utils.py 纯函数，
+# 本流水线用标准库 unittest 直接锁死（无需安装 homeassistant），另全量 py_compile
+# 挡语法回归。任一处漂移都是静默退化（显示不对、手测易当网络卡）。
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: seek-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  seek-contract:
+    name: seek contract (py_compile + unittest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Compile all integration sources
+        run: python3 -m compileall -q custom_components/musicflow
+
+      - name: Seek pure-function contract
+        run: python3 -m unittest discover -s tests -p "test_seek_utils.py" -v

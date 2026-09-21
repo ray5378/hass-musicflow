@@ -47,6 +47,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import MusicFlowError
 from .browse_media import build_browse_media, build_search_results, parse_media_id
+from .seek_utils import SEEK_GUARD_SECONDS, clamp_seek_target
 from .const import (
     ATTR_CONTENT_ID,
     ATTR_CONTENT_TYPE,
@@ -496,17 +497,10 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
 
     async def async_media_seek(self, position: float) -> None:
         # 越界钳制:拖到 99-100% 四舍五入超 duration 会让 DLNA 拒收/跳开头。
-        try:
-            target = float(position)
-        except (TypeError, ValueError):
+        # NaN/非法输入直接丢弃（纯函数 seek_utils.clamp_seek_target，CI 单测锁定）。
+        target = clamp_seek_target(position, self.media_duration)
+        if target is None:
             return
-        if target != target:  # NaN
-            return
-        duration = self.media_duration
-        if isinstance(duration, (int, float)) and duration > 0:
-            target = max(0.0, min(target, float(duration)))
-        else:
-            target = max(0.0, target)
         control = self._control_peer or self._peer
         # 先起播再 seek:STOPPED/IDLE/TRANSITIONING 下发 Seek 会被部分渲染器静默
         # 丢弃(「拖后不播」)。PAUSED 允许直接 Seek(保持暂停,不拉起播放);
@@ -529,7 +523,7 @@ class MusicFlowMediaPlayer(CoordinatorEntity[MusicFlowCoordinator], MediaPlayerE
                         break
         # 乐观双写:控制打组、显示读单机,两边都置 guard,避免刷新读回旧值把进度拽回去。
         # _call 随后会 refresh,guard 会过滤掉 seek 前采样的旧位置上报。
-        guard_until = dt_util.utcnow() + timedelta(seconds=8)
+        guard_until = dt_util.utcnow() + timedelta(seconds=SEEK_GUARD_SECONDS)
         seen: set[int] = set()
         for peer in (control, self._peer):
             if peer is None or id(peer) in seen:

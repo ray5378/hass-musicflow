@@ -40,6 +40,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError
+from .seek_utils import seek_guard_active, should_keep_optimistic
 from .const import (
     CONTROLLABLE_KINDS,
     DOMAIN,
@@ -141,7 +142,9 @@ class PeerState:
         if self.pending_reanchor:
             return 0
         if self.seek_target is not None and self.seek_guard_until is not None:
-            if dt_util.utcnow() < self.seek_guard_until:
+            if seek_guard_active(
+                dt_util.utcnow().timestamp(), self.seek_guard_until.timestamp()
+            ):
                 return max(0.0, self.seek_target)
             self.seek_target = None
             self.seek_guard_until = None
@@ -188,13 +191,17 @@ class PeerState:
         if "position" in status and isinstance(status.get("position"), (int, float)):
             reported = float(status["position"])
             # seek 保护:上报仍是旧位置(目标-2s 以外)时不覆盖乐观值与锚点;
-            # 落位或过期即解除,恢复正常采样。
+            # 落位或过期即解除,恢复正常采样(判定走 seek_utils，供 CI 单测)。
             if self.seek_target is not None and self.seek_guard_until is not None:
-                if dt_util.utcnow() >= self.seek_guard_until or reported >= self.seek_target - 2:
-                    self.seek_target = None
-                    self.seek_guard_until = None
-                else:
+                if should_keep_optimistic(
+                    reported,
+                    self.seek_target,
+                    dt_util.utcnow().timestamp(),
+                    self.seek_guard_until.timestamp(),
+                ):
                     return
+                self.seek_target = None
+                self.seek_guard_until = None
             updated_at = status.get("updatedAt")
             if isinstance(updated_at, (int, float)) and updated_at > 0:
                 self.status_updated_at = dt_util.utc_from_timestamp(updated_at / 1000)
