@@ -36,17 +36,35 @@ jobs:
 
             Install/update via HACS (MusicFlow custom repository).
 
-            ### 本版
-            - **lockstep 对齐发布**:与 **MusicFlow 服务端 v4.0.6** / **客户端 v5.0.22** 配套。
-              本仓代码无功能变更,版本号对齐用于让四个关联仓库的发布状态可追溯
-              (集成 / 卡片 / 服务端 / 客户端同一批次)。
-            - 服务端 v4.0.6 把进度条跳转(sendspin / DLNA)按 Music Assistant 语义重做
-              —— seek 由「在流里挪指针」改为「用新起点重建一条流」,并根治了 ffmpeg
-              孤儿泄漏;AirPlay 取流通道也已从 DLNA 路由中独立出来。集成侧的实体建模、
-              控制面端点与 seek 调用方式均无变化。
+            ### 本版 —— seek 目标统一整秒（最小粒度 1 秒）
+
+            修复「在 HA 里拖动进度条之后，远端播放会静默死掉、进度冻住」。
+
+            - **根因**：服务端 sendspin 流式引擎按 **25ms 帧栅格**取帧，而滑动窗口基准是
+              「毫秒 → 样本」换算，**只有目标为 25ms 整数倍时两者严格相等**。集成侧此前把 seek
+              目标（毫秒精度，如 31.178s）原样下发 → 取帧起点落在窗口基准之前 → 子进程进入
+              纯微任务自旋（不 await I/O）→ 事件循环饿死 → 心跳 / poll RPC 全排不上队 →
+              **65s 看门狗 SIGKILL**（现象：拖完进度条播放静默死掉、进度冻住）。
+            - **改动**：新增 `align_seek_seconds()`（向下取整到整秒），在 `api.async_seek`
+              （HA 侧唯一出口）以及 `clamp_seek_target` 钳制**之后**双处生效 —— 覆盖全部路径，
+              包括不经 `clamp_seek_target` 的流转播放 resume seek。代价 ≤999ms，不可闻。
+            - **门禁**：`tests/test_seek_utils.py` 新增 `AlignSeekSecondsTest`（截断 / 整秒恒等 /
+              25ms 帧栅格 / 非法归 0 / 常量值），并断言「`clamp_seek_target` 出口恒为整秒」；
+              `seek-contract.yml` 跑 `compileall` + `unittest`。
+
+            ### 配套
+            - **MusicFlow 服务端 v4.0.12+**：引擎三层防御（帧栅格对齐 / 亚帧容错 / 淘汰护栏）
+              + `POST /v1/peers/:id/seek` 唯一入口兜底 —— 非整秒目标不再可能送进引擎。
+            - **MusicFlow 客户端 v5.0.28+**、**HA 卡片 v2.4.8+**：同一批次对齐发布。
+            - 集成侧实体建模、控制面端点与 seek 调用方式均无变化，**无需重新配置**。
 
             ### 兼容性
-            - 需配合 **MusicFlow 服务端 v4.0.6+** 与 **客户端 v5.0.22+**;
-              更早的服务端仍能连接,但跳转进度的行为以服务端为准。
+            - 需配合 **MusicFlow 服务端 v4.0.12+**；更早的服务端仍能连接，
+              但拖拽 seek 的行为由服务端决定（本集成只保证下发的目标为整秒）。
+
+            ### 升级步骤
+            1. HACS 中更新本集成
+            2. 重启 Home Assistant，或重新加载 MusicFlow 集成
+            3. 拖动进度条验证：拖动后播放应正常继续，不再静默死掉
           draft: false
           prerelease: false
