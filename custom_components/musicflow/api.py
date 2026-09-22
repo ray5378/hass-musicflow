@@ -27,6 +27,7 @@ from .const import (
     WS_HEARTBEAT,
     WS_PATH,
 )
+from .seek_utils import align_seek_seconds
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,8 +172,15 @@ class MusicFlowClient:
         await self._api_post(f"/peers/{self._encode(peer_id)}/prev")
 
     async def async_seek(self, peer_id: str, seconds: float) -> None:
+        # 精度守卫（最小粒度 1 秒）：本方法是 HA 侧 seek 的**唯一出口**，所有下发
+        # 目标都从这里过一道整秒对齐 —— 非整秒目标会让服务端 sendspin 子进程按
+        # 25ms 帧栅格取帧时与窗口的毫秒基准错位，陷入纯微任务自旋被 65s 看门狗
+        # SIGKILL（现象：拖完进度条播放静默死掉）。与客户端 Duration.inSeconds
+        # 同语义（向下取整）。上游 media_player 的 clamp_seek_target 已对齐过一次，
+        # 这里兜的是不经过它的调用路径（如流转播放的 resume seek）。
         await self._api_post(
-            f"/peers/{self._encode(peer_id)}/seek", {"seconds": float(seconds)}
+            f"/peers/{self._encode(peer_id)}/seek",
+            {"seconds": align_seek_seconds(seconds)},
         )
 
     async def async_set_volume(self, peer_id: str, volume: int) -> None:
