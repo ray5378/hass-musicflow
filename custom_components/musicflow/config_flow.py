@@ -15,8 +15,9 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError
 from .const import (
-    CONF_API_KEY,
+    CONF_PASSWORD,
     CONF_URL,
+    CONF_USERNAME,
     CONF_VERIFY_SSL,
     DEFAULT_PORT,
     DOMAIN,
@@ -41,7 +42,7 @@ def _normalize_url(raw: str) -> str:
 class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
     """MusicFlow 配置流程。"""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         self._discovered_url: str | None = None
@@ -49,7 +50,7 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
 
     # ==================== 通用校验 ====================
     async def _async_validate(
-        self, url: str, api_key: str, verify_ssl: bool
+        self, url: str, username: str, password: str, verify_ssl: bool
     ) -> tuple[dict[str, str], dict[str, Any]]:
         """返回 (errors, user_info)。errors 为空表示校验通过。
 
@@ -59,7 +60,7 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         try:
             session = async_get_clientsession(self.hass, verify_ssl=verify_ssl)
-            client = MusicFlowClient(session, url, api_key)
+            client = MusicFlowClient(session, url, username, password)
             info = await client.async_verify()
         except MusicFlowAuthError:
             return {"base": "invalid_auth"}, {}
@@ -75,7 +76,8 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
         return vol.Schema(
             {
                 vol.Required(CONF_URL, default=url_default): str,
-                vol.Required(CONF_API_KEY): str,
+                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_PASSWORD): str,
                 vol.Optional(CONF_VERIFY_SSL, default=True): bool,
             }
         )
@@ -90,9 +92,12 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 url = _normalize_url(user_input[CONF_URL])
                 url_default = url
-                api_key = user_input[CONF_API_KEY].strip()
+                username = user_input[CONF_USERNAME].strip()
+                password = user_input[CONF_PASSWORD]
                 verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
-                errors, info = await self._async_validate(url, api_key, verify_ssl)
+                errors, info = await self._async_validate(
+                    url, username, password, verify_ssl
+                )
                 if not errors:
                     # 手动添加时没有 mDNS uuid,退而用 URL 去重
                     await self.async_set_unique_id(url, raise_on_progress=False)
@@ -101,7 +106,8 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
                         title=self._title(info, url),
                         data={
                             CONF_URL: url,
-                            CONF_API_KEY: api_key,
+                            CONF_USERNAME: username,
+                            CONF_PASSWORD: password,
                             CONF_VERIFY_SSL: verify_ssl,
                         },
                     )
@@ -149,20 +155,24 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_zeroconf_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """发现后只需补一个 API Key。"""
+        """发现后只需补用户名 + 密码。"""
         errors: dict[str, str] = {}
         url = self._discovered_url or ""
         if user_input is not None:
             try:
-                api_key = user_input[CONF_API_KEY].strip()
+                username = user_input[CONF_USERNAME].strip()
+                password = user_input[CONF_PASSWORD]
                 verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
-                errors, info = await self._async_validate(url, api_key, verify_ssl)
+                errors, info = await self._async_validate(
+                    url, username, password, verify_ssl
+                )
                 if not errors:
                     return self.async_create_entry(
                         title=self._title(info, url, self._discovered_name),
                         data={
                             CONF_URL: url,
-                            CONF_API_KEY: api_key,
+                            CONF_USERNAME: username,
+                            CONF_PASSWORD: password,
                             CONF_VERIFY_SSL: verify_ssl,
                         },
                     )
@@ -180,7 +190,8 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
             },
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_API_KEY): str,
+                    vol.Required(CONF_USERNAME): str,
+                    vol.Required(CONF_PASSWORD): str,
                     vol.Optional(CONF_VERIFY_SSL, default=True): bool,
                 }
             ),
@@ -196,19 +207,26 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """API Key 失效时重新填写。"""
+        """登录凭据失效时重新填写用户名 + 密码。"""
         errors: dict[str, str] = {}
         url = ""
         try:
             entry = self._get_reauth_entry()
             url = entry.data[CONF_URL]
             if user_input is not None:
-                api_key = user_input[CONF_API_KEY].strip()
+                username = user_input[CONF_USERNAME].strip()
+                password = user_input[CONF_PASSWORD]
                 verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
-                errors, _info = await self._async_validate(url, api_key, verify_ssl)
+                errors, _info = await self._async_validate(
+                    url, username, password, verify_ssl
+                )
                 if not errors:
                     return self.async_update_reload_and_abort(
-                        entry, data_updates={CONF_API_KEY: api_key}
+                        entry,
+                        data_updates={
+                            CONF_USERNAME: username,
+                            CONF_PASSWORD: password,
+                        },
                     )
         except AbortFlow:
             raise
@@ -219,7 +237,12 @@ class MusicFlowConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reauth_confirm",
             description_placeholders={"url": url},
-            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_USERNAME): str,
+                    vol.Required(CONF_PASSWORD): str,
+                }
+            ),
             errors=errors,
         )
 

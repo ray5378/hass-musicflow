@@ -2,9 +2,10 @@
 
 集成侧所有与 MusicFlow 的交互都经过这里,业务层不直接碰 HTTP/WS。
 
-认证:所有请求带 `Authorization: Bearer <api_key>`。后端 middleware/auth.ts 的
-Bearer 分支先按 JWT 校验,失败再回退到长期 API Key,所以直接传 API Key 即可,
-`/rest/*`(OpenSubsonic)与 `/rest/api/*`(内部 REST)通吃。
+认证:用用户名 + 密码调 `POST /rest/api/v1/auth/login` 换取 JWT(24h 过期),
+之后所有请求带 `Authorization: Bearer <jwt>`。JWT 是后端 middleware/auth.ts
+支持的契约(Bearer 分支先按 JWT 校验),与旧 API Key 同一套 `?token=` / `Bearer`
+入口,因此无需后端改动即可替换。JWT 过期(或 401)后自动用用户名+密码重新登录。
 
 WebSocket 用 HA 自带的 aiohttp,不引入 `websockets` 三方依赖。
 """
@@ -37,7 +38,7 @@ class MusicFlowError(Exception):
 
 
 class MusicFlowAuthError(MusicFlowError):
-    """API Key 无效或已过期。"""
+    """用户名或密码错误 / 登录凭据失效。"""
 
 
 class MusicFlowClient:
@@ -47,13 +48,54 @@ class MusicFlowClient:
         self,
         session: aiohttp.ClientSession,
         url: str,
-        api_key: str,
+        username: str,
+        password: str,
     ) -> None:
         self._session = session
         self._base_url = url.rstrip("/")
-        self._api_key = api_key
+        self._username = username
+        self._password = password
+        self._token: str | None = None
+        self._retried = False
         self._listeners: list[Callable[[dict], None]] = []
         self._ws: aiohttp.ClientWebSocketResponse | None = None
+
+    # ==================== 认证(用户名+密码 → JWT)====================
+    async def login(self) -> str:
+        """用用户名+密码换取 JWT(后端 24h 过期),返回 token。"""
+        url = URL(f"{self._base_url}{API_PREFIX}/auth/login", encoded=True)
+        try:
+            async with self._session.post(
+                url,
+                json={"username": self._username, "password": self._password},
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                if resp.status == 401:
+                    raise MusicFlowAuthError("用户名或密码错误")
+                if resp.status >= 400:
+                    text = await resp.text()
+                    raise MusicFlowError(f"登录失败 {resp.status}: {text[:200]}")
+                data = await resp.json()
+        except (TimeoutError, asyncio.TimeoutError) as err:
+            raise MusicFlowError("登录超时") from err
+        except aiohttp.ClientError as err:
+            raise MusicFlowError(f"登录网络错误: {err}") from err
+        token = data.get("token") if isinstance(data, dict) else None
+        if not token:
+            raise MusicFlowAuthError("登录响应中缺少 token")
+        self._token = token
+        self._retried = False
+        return token
+
+    async def _ensure_token(self) -> str:
+        """确保已持有有效 JWT;没有则登录。"""
+        if self._token is None:
+            return await self.login()
+        return self._token
+
+    @property
+    def token(self) -> str | None:
+        return self._token
 
     # ==================== 通用 ====================
     @property
@@ -64,10 +106,11 @@ class MusicFlowClient:
     def ws_url(self) -> str:
         scheme = "wss" if self._base_url.startswith("https") else "ws"
         host = self._base_url.split("://", 1)[-1]
-        return f"{scheme}://{host}{WS_PATH}?token={quote(self._api_key, safe='')}"
+        token = self._token or ""
+        return f"{scheme}://{host}{WS_PATH}?token={quote(token, safe='')}"
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._api_key}"}
+        return {"Authorization": f"Bearer {self._token or ''}"}
 
     @staticmethod
     def _encode(segment: str) -> str:
@@ -85,6 +128,7 @@ class MusicFlowClient:
         json_body: dict | None = None,
     ) -> Any:
         """发一次请求。path 必须是已编码好的完整路径(不含 host)。"""
+        token = await self._ensure_token()
         url = URL(f"{self._base_url}{path}", encoded=True)
         try:
             async with self._session.request(
@@ -92,11 +136,18 @@ class MusicFlowClient:
                 url,
                 params=params,
                 json=json_body,
-                headers=self._headers(),
+                headers={"Authorization": f"Bearer {token}"},
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
             ) as resp:
                 if resp.status in (401, 403):
-                    raise MusicFlowAuthError(f"{method} {path} 认证失败({resp.status})")
+                    # JWT 过期或被吊销:清掉后重试一次(重新登录)
+                    if self._retried:
+                        raise MusicFlowAuthError(f"{method} {path} 认证失败({resp.status})")
+                    self._retried = True
+                    self._token = None
+                    return await self._request(
+                        method, path, params=params, json_body=json_body
+                    )
                 if resp.status >= 400:
                     text = await resp.text()
                     raise MusicFlowError(f"{method} {path} 失败 {resp.status}: {text[:200]}")
@@ -133,9 +184,8 @@ class MusicFlowClient:
 
     # ==================== 连通性 / 账号 ====================
     async def async_verify(self) -> dict:
-        """校验地址 + API Key,返回当前用户信息。"""
-        data = await self._api_get("/users/me")
-        return data if isinstance(data, dict) else {}
+        """用用户名+密码登录并校验地址,返回当前用户信息。"""
+        return await self._api_get("/users/me")
 
     # ==================== Peer(统一播放目标)====================
     async def async_get_peers(self) -> list[dict]:
@@ -377,12 +427,13 @@ class MusicFlowClient:
     def stream_url(self, song_id: str) -> str:
         """歌曲直链。给 media_source 用:HA 会把这个 URL 交给播放器/浏览器,
         没法带 Authorization 头,所以凭据走 `?token=` —— 后端 auth 中间件对该参数
-        先按 JWT 验、再回退 API Key(与 WebSocket 的 ?token= 同一套契约)。
+        先按 JWT 验(与 WebSocket / REST 的 ?token= 同一套契约)。
         """
+        token = self._token or ""
         return (
             f"{self._base_url}{SUBSONIC_PREFIX}/stream"
             f"?id={quote(str(song_id), safe='')}"
-            f"&token={quote(self._api_key, safe='')}"
+            f"&token={quote(token, safe='')}"
         )
 
     async def async_fetch_image(self, url: str) -> tuple[bytes | None, str | None]:
@@ -392,9 +443,10 @@ class MusicFlowClient:
         由 HA 服务端代拉再喂给前端。
         """
         try:
+            token = await self._ensure_token()
             async with self._session.get(
                 URL(url, encoded=True),
-                headers=self._headers(),
+                headers={"Authorization": f"Bearer {token}"},
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
             ) as resp:
                 if resp.status >= 400:
@@ -409,6 +461,8 @@ class MusicFlowClient:
         self._listeners.append(callback)
 
     async def async_ws_connect(self) -> aiohttp.ClientWebSocketResponse:
+        # 连接前确保已登录拿到 JWT:WS 的 ?token= 用 JWT,未登录会握手失败。
+        await self._ensure_token()
         # heartbeat 让 aiohttp 自动发 ping,后端 ws 库会回 pong;
         # 不传 timeout,避免不同 aiohttp 版本对该参数的语义差异。
         self._ws = await self._session.ws_connect(

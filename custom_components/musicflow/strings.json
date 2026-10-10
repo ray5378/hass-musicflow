@@ -4,10 +4,11 @@
     "step": {
       "user": {
         "title": "Connect to MusicFlow",
-        "description": "Enter your MusicFlow server address and API key. The API key can be created in MusicFlow under Settings → Account.",
+        "description": "Enter your MusicFlow server address, username and password.",
         "data": {
           "url": "Server address",
-          "api_key": "API key",
+          "username": "Username",
+          "password": "Password",
           "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
@@ -16,23 +17,25 @@
       },
       "zeroconf_confirm": {
         "title": "MusicFlow discovered",
-        "description": "Found {name} at {url}. Enter an API key to finish setup.",
+        "description": "Found {name} at {url}. Enter a username and password to finish setup.",
         "data": {
-          "api_key": "API key",
+          "username": "Username",
+          "password": "Password",
           "verify_ssl": "Verify SSL certificate"
         }
       },
       "reauth_confirm": {
         "title": "Re-authenticate MusicFlow",
-        "description": "The API key for {url} is no longer valid. Enter a new one.",
+        "description": "The login credentials for {url} are no longer valid. Enter them again.",
         "data": {
-          "api_key": "API key"
+          "username": "Username",
+          "password": "Password"
         }
       }
     },
     "error": {
       "cannot_connect": "Cannot reach the MusicFlow server. Check the address and that the server is running.",
-      "invalid_auth": "The API key was rejected.",
+      "invalid_auth": "The username or password was rejected.",
       "unknown": "Unexpected error"
     },
     "abort": {

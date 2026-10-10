@@ -11,7 +11,7 @@ import logging
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryAuthFailed
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -21,7 +21,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntryType, async_get as async_get_device_registry
 
 from .api import MusicFlowClient, MusicFlowError
-from .const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL, DOMAIN
+from .const import (
+    CONF_PASSWORD,
+    CONF_URL,
+    CONF_USERNAME,
+    CONF_VERIFY_SSL,
+    DOMAIN,
+)
 from .coordinator import MusicFlowCoordinator
 from .proxy import MusicFlowProxyView, _ws_subscribe
 
@@ -38,6 +44,20 @@ PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 # 直接赋函数引用会让 HA 配置校验拿到一个函数而非 schema,导致集成整体加载失败
 # (所有条目"未加载"且配置流 500)。这是 1.3.0~1.3.2 一直连不上的根因。
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v1(api_key)→ v2(username+password)。
+
+    旧配置只存了 api_key(长期令牌),无法反推密码,因此清空凭据并把版本抬到 2;
+    随后 async_setup_entry 检测到缺用户名/密码会抛 ConfigEntryAuthFailed,
+    由 HA 弹出重新认证流程,用户填入用户名+密码即可。
+    """
+    if entry.version < 2:
+        data = {**entry.data}
+        data.pop("api_key", None)
+        hass.config_entries.async_update_entry(entry, data=data, version=2)
+    return True
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -137,16 +157,34 @@ async def _ws_backend_config(
     每个已加载的配置项贡献一个后端;卡片默认用第一个(单服务器场景)。
     """
     backends = hass.data.get(DOMAIN, {}).get("_backends", {})
-    configs = [v for v in backends.values() if v]
+    # 不下发 client 对象(不可序列化),只暴露卡片需要的连接信息
+    configs = [
+        {
+            "url": v.get("url"),
+            "username": v.get("username"),
+            "password": v.get("password"),
+            "proxySupported": v.get("proxySupported"),
+            "verify_ssl": v.get("verify_ssl"),
+        }
+        for v in backends.values()
+        if v
+    ]
     connection.send_result(msg["id"], {"backends": configs})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """建立 client + coordinator,首刷成功后加载平台。"""
+    # 旧版(api_key)配置无法反推密码,迁移时会清掉凭据并触发重新认证,
+    # 这里缺用户名/密码直接抛 ConfigEntryAuthFailed 让 HA 弹重新认证。
+    username = entry.data.get(CONF_USERNAME)
+    password = entry.data.get(CONF_PASSWORD)
+    if not username or not password:
+        raise ConfigEntryAuthFailed("请重新填写 MusicFlow 用户名和密码")
+
     session = async_get_clientsession(
         hass, verify_ssl=entry.data.get(CONF_VERIFY_SSL, True)
     )
-    client = MusicFlowClient(session, entry.data[CONF_URL], entry.data[CONF_API_KEY])
+    client = MusicFlowClient(session, entry.data[CONF_URL], username, password)
 
     coordinator = MusicFlowCoordinator(hass, entry, client)
     # 首刷失败(网络不通/认证过期)会由 HA 自动重试或拉起重新认证
@@ -154,14 +192,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    # 供 MusicFlow 前端卡片直连后端:暴露 url + api_key(卡片经 HA WS 取走后
-    # 直连后端 /ws + REST,实现与 Web/App 平等的实时双向同步);
+    # 供 MusicFlow 前端卡片直连后端:暴露 url + 用户名 + 密码(卡片经 HA WS 取走后
+    # 直连后端 /ws + REST,实现与 Web/App 平等的实时双向同步,自行用用户名+密码登录);
     # proxySupported 表示本集成提供 REST 代理 + 事件订阅,卡片外网访问失败时
-    # 可自动切换经 HA 中转(API Key 不下发浏览器,只存在 HA 侧)。
+    # 可自动切换经 HA 中转(浏览器连不上后端,由集成代理鉴权)。
     backends = hass.data[DOMAIN].setdefault("_backends", {})
     backends[entry.entry_id] = {
         "url": entry.data[CONF_URL],
-        "api_key": entry.data[CONF_API_KEY],
+        "username": username,
+        "password": password,
+        "client": client,
         "proxySupported": True,
         "verify_ssl": entry.data.get(CONF_VERIFY_SSL, True),
     }

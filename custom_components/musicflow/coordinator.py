@@ -287,7 +287,7 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             peers = await self.client.async_get_peers()
         except MusicFlowAuthError as err:
             # 触发 HA 的重新认证流程,而不是一直刷失败日志
-            raise ConfigEntryAuthFailed(f"API Key 已失效: {err}") from err
+            raise ConfigEntryAuthFailed(f"登录凭据已失效: {err}") from err
         except MusicFlowError as err:
             raise UpdateFailed(str(err)) from err
 

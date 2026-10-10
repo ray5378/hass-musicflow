@@ -15,7 +15,8 @@ DOMAIN: Final = "musicflow"
 
 # ==================== ConfigEntry 字段 ====================
 CONF_URL: Final = "url"  # MusicFlow 服务器地址,如 http://192.168.1.10:46400
-CONF_API_KEY: Final = "api_key"  # 用户 API Key(Bearer 认证)
+CONF_USERNAME: Final = "username"  # 登录用户名
+CONF_PASSWORD: Final = "password"  # 登录密码(换 JWT,24h 过期)
 CONF_VERIFY_SSL: Final = "verify_ssl"
 
 DEFAULT_PORT: Final = 46400

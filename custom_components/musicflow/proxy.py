@@ -48,7 +48,7 @@ _PROXY_PREFIX = "/api/musicflow/rest"
 
 
 def _first_backend(hass: HomeAssistant) -> dict[str, Any] | None:
-    """取第一个已加载配置项的后端连接信息(url / api_key / verify_ssl)。"""
+    """取第一个已加载配置项的后端连接信息(client / url / verify_ssl)。"""
     backends = hass.data.get(DOMAIN, {}).get("_backends", {})
     for value in backends.values():
         if value:
@@ -56,11 +56,18 @@ def _first_backend(hass: HomeAssistant) -> dict[str, Any] | None:
     return None
 
 
-def _build_ws_url(url: str, api_key: str) -> str:
+def _backend_token(backend: dict[str, Any]) -> str | None:
+    """读客户端持有的实时 JWT(24h 过期,由客户端自动刷新)。"""
+    client = backend.get("client")
+    return getattr(client, "token", None) if client is not None else None
+
+
+def _build_ws_url(url: str, token: str | None) -> str:
     """后端 /ws 连接地址(带 token),与 api.MusicFlowClient.ws_url 同一套契约。"""
     scheme = "wss" if url.startswith("https") else "ws"
     host = url.split("://", 1)[-1]
-    return f"{scheme}://{host}/ws?token={quote(api_key, safe='')}"
+    token = token or ""
+    return f"{scheme}://{host}/ws?token={quote(token, safe='')}"
 
 
 class MusicFlowProxyView(HomeAssistantView):
@@ -112,20 +119,21 @@ class MusicFlowProxyView(HomeAssistantView):
         # 否则会把 query 拼两次(出现两个 '?'),导致后端解析出混乱的 size/id → 封面失败。
         if request.query_string and "?" not in target:
             target = f"{target}?{request.query_string}"
-        # 兜底:把集成持有的 api_key 作为 ?token= 带上。集成补的
-        # `Authorization: Bearer` 头依赖后端 v1.1.7+ 的 "Bearer->apiKey" 回退;
-        # 较旧后端(或 :latest 镜像滞后)或被反向代理剥离自定义头时该头会认证
-        # 失败,导致 star 等需要用户身份的操作在代理模式 401。?token= 走与直连
-        # 完全相同的契约(后端各版本均支持),让收藏在外网代理下稳定可用。
-        if backend.get("api_key"):
+        # 兜底:把集成持有的实时 JWT 作为 ?token= 带上。集成补的
+        # `Authorization: Bearer` 头用同一把 JWT;较旧后端(或 :latest 镜像滞后)
+        # 或被反向代理剥离自定义头时该头会认证失败,导致 star 等需要用户身份的
+        # 操作在代理模式 401。?token= 走与直连完全相同的契约(后端各版本均支持),
+        # 让收藏在外网代理下稳定可用。
+        token = _backend_token(backend)
+        if token:
             sep = "&" if "?" in target else "?"
-            target = f"{target}{sep}token={quote(backend['api_key'], safe='')}"
+            target = f"{target}{sep}token={quote(token, safe='')}"
         # encoded=True:tail 已是编码后的路径,不再二次编码(否则 %2F 会被拆成路径分隔符)
         url = URL(target, encoded=True)
 
         # 透传浏览器的内容协商/条件请求头,让后端能按 Accept 返回 webp、
         # 并按 If-None-Match 返回 304(否则外网代理模式无法复用封面缓存)。
-        headers = {"Authorization": f"Bearer {backend['api_key']}"}
+        headers = {"Authorization": f"Bearer {token or ''}"}
         for _h in ("Accept", "If-None-Match", "If-Modified-Since"):
             _v = request.headers.get(_h)
             if _v:
@@ -187,7 +195,7 @@ async def _ws_subscribe(
     )
     try:
         ws = await session.ws_connect(
-            _build_ws_url(backend["url"], backend["api_key"]),
+            _build_ws_url(backend["url"], _backend_token(backend)),
             heartbeat=WS_HEARTBEAT,
         )
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
