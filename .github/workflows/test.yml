@@ -1,0 +1,43 @@
+name: Test
+
+# 单元测试 + 覆盖率门禁（blocking）。
+#
+# 背景：集成侧此前只有 seek 纯函数契约守卫（seek-contract.yml）。实体建模、
+# 传输控制、代理转发、配置流这些「一改就静默退化」的链路没有自动回归网。
+# 本流水线用 HA 官方测试框架（pytest-homeassistant-custom-component）跑全量
+# 单元测试，并用 pytest-cov 把 custom_components/musicflow 的语句覆盖率卡在 60%。
+# 纯文档/纯注释改动不受影响；任何行为漂移会以用例失败或覆盖率跌破的形式暴露。
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (unit + coverage >= 60%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt
+
+      - name: Run tests with coverage gate
+        # 覆盖率阈值与 --cov 目标写在 pytest.ini 的 addopts 里，这里直接跑 pytest。
+        run: pytest

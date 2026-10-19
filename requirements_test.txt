@@ -1,0 +1,12 @@
+pytest
+pytest-asyncio
+pytest-cov
+# HA 官方测试框架；0.13.246 对应 homeassistant==2025.5.3。
+# 仓库源码（config_flow/media_player/media_source）模块级硬导入 HA 2025.5+ API
+# （helpers.service_info.zeroconf、SearchMedia/ SearchMediaQuery），
+# 因此测试基线必须是 HA >= 2025.5 的版本。
+pytest-homeassistant-custom-component==0.13.246
+# HA 把 aiodns 钉在 3.4.0，但未钉 pycares；若不钉，pip 会装 pycares 5.x，
+# 而 5.x 移除了 ares_query_a_result，导致 aiodns 3.4.0 类定义期即抛
+# AttributeError，进而 import aiohttp 直接失败。此处钉回 4.9.0。
+pycares==4.9.0
