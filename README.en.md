@@ -46,8 +46,8 @@ the MusicFlow backend to the DLNA device and never passes through HA.
 
 | Integration | MusicFlow server | Home Assistant |
 |---|---|---|
-| **1.3.8** | **1.7.x** or newer | 2024.12 or newer |
-| 1.3.0+ | 1.7.x or newer | 2024.12 or newer |
+| **1.3.8** | **1.7.x** or newer | 2025.5 or newer |
+| 1.3.0+ | 1.7.x or newer | 2025.5 or newer |
 
 The card [hass-musicflow-card](https://github.com/ray5378/hass-musicflow-card)
 **v1.6.68** is the tested companion (server **v1.7.x** + integration **1.3.8** +
@@ -55,8 +55,8 @@ card **v1.6.68**). Keep these three in sync.
 
 Notes:
 
-- The in-library **search box** needs Home Assistant **2025.5** or newer. On older
-  cores everything else still works, only the search field is hidden.
+- This integration requires Home Assistant **2025.5** or newer (the in-library
+  search uses the media-search API that HA introduced in 2025.5).
 - Mute, announce (TTS), source select and the richer track metadata need
   MusicFlow server **1.7.x** or newer.
 - Not sure which server version you run? Open `http://<musicflow-host>/ping`.
@@ -266,7 +266,7 @@ Released under the [MIT License](LICENSE).
 [hacs-link]: https://github.com/hacs/integration
 [release-badge]: https://img.shields.io/github/v/release/ray5378/hass-musicflow?display_name=tag
 [release-link]: https://github.com/ray5378/hass-musicflow/releases
-[ha-badge]: https://img.shields.io/badge/Home%20Assistant-2024.12%2B-41BDF5.svg
+[ha-badge]: https://img.shields.io/badge/Home%20Assistant-2025.5%2B-41BDF5.svg
 [ha-link]: https://www.home-assistant.io/
 [my-badge]: https://my.home-assistant.io/badges/hacs_repository.svg
 [my-link]: https://my.home-assistant.io/redirect/hacs_repository/?owner=ray5378&repository=hass-musicflow&category=integration
