@@ -6,3 +6,10 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+
+# 测试与覆盖率产物（pytest / pytest-cov）
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+coverage.xml
