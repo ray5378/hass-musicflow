@@ -36,35 +36,34 @@ jobs:
 
             Install/update via HACS (MusicFlow custom repository).
 
-            ### 本版 —— seek 目标统一整秒（最小粒度 1 秒）
+            ### 本版 —— 修复 JWT 认证重试无限递归；最低核心版本声明收紧到 HA 2025.5
 
-            修复「在 HA 里拖动进度条之后，远端播放会静默死掉、进度冻住」。
+            修复「服务端持续返回 401/403 时，集成侧请求重试无限递归到 RecursionError」。
 
-            - **根因**：服务端 sendspin 流式引擎按 **25ms 帧栅格**取帧，而滑动窗口基准是
-              「毫秒 → 样本」换算，**只有目标为 25ms 整数倍时两者严格相等**。集成侧此前把 seek
-              目标（毫秒精度，如 31.178s）原样下发 → 取帧起点落在窗口基准之前 → 子进程进入
-              纯微任务自旋（不 await I/O）→ 事件循环饿死 → 心跳 / poll RPC 全排不上队 →
-              **65s 看门狗 SIGKILL**（现象：拖完进度条播放静默死掉、进度冻住）。
-            - **改动**：新增 `align_seek_seconds()`（向下取整到整秒），在 `api.async_seek`
-              （HA 侧唯一出口）以及 `clamp_seek_target` 钳制**之后**双处生效 —— 覆盖全部路径，
-              包括不经 `clamp_seek_target` 的流转播放 resume seek。代价 ≤999ms，不可闻。
-            - **门禁**：`tests/test_seek_utils.py` 新增 `AlignSeekSecondsTest`（截断 / 整秒恒等 /
-              25ms 帧栅格 / 非法归 0 / 常量值），并断言「`clamp_seek_target` 出口恒为整秒」；
-              `seek-contract.yml` 跑 `compileall` + `unittest`。
+            - **根因**：`_request` 的「只重试一次」守卫用的是实例状态 `self._retried`，
+              而 `login()` 每次成功登录都会把它复位为 `False`。当 JWT 被吊销 / 过期、用户名
+              密码仍能登录成功、但目标接口持续返回 401/403 时，重试会一直递归下去，直到
+              `RecursionError` —— 本意的 `MusicFlowAuthError`（如实报错）永远不可达。
+            - **改动**：把「本次调用还允许重试一次」的标记改为由递归调用自己携带的参数
+              `_retry_auth`，不再依赖实例状态。既修掉无限递归，也顺带消除并发请求之间
+              互相踩标记的问题；持续认证失败时现在会如实抛出 `MusicFlowAuthError`。
+            - **声明**：`hacs.json` 的最低核心版本声明从 2024.12 收紧到 **2025.5**，如实反映
+              代码对 HA 2025.5 媒体搜索 API（`SearchMedia` / `SearchMediaQuery`）的硬依赖，
+              避免在旧核心上安装后直接 import 失败。
+            - **门禁**：集成侧新增 `pytest` + HA 官方测试框架单测与 60% 覆盖率四维硬门禁，
+              以独立 `Test` workflow 阻塞合并；新增回归守卫用例锁定「持续 401/403 恰好重试
+              一次后抛 MusicFlowAuthError」，并通过反向变异验证判红。
 
             ### 配套
-            - **MusicFlow 服务端 v4.0.12+**：引擎三层防御（帧栅格对齐 / 亚帧容错 / 淘汰护栏）
-              + `POST /v1/peers/:id/seek` 唯一入口兜底 —— 非整秒目标不再可能送进引擎。
-            - **MusicFlow 客户端 v5.0.28+**、**HA 卡片 v2.4.8+**：同一批次对齐发布。
-            - 集成侧实体建模、控制面端点与 seek 调用方式均无变化，**无需重新配置**。
+            - 需 **Home Assistant 2025.5 及以上**（曲库内搜索使用 HA 2025.5 才提供的媒体搜索 API）。
+            - 集成侧实体建模、控制面端点与请求方式均无变化，**无需重新配置**。
 
             ### 兼容性
-            - 需配合 **MusicFlow 服务端 v4.0.12+**；更早的服务端仍能连接，
-              但拖拽 seek 的行为由服务端决定（本集成只保证下发的目标为整秒）。
+            - 需 **Home Assistant 2025.5 及以上**；在更早的核心上加载会因缺少媒体搜索 API 而失败。
 
             ### 升级步骤
             1. HACS 中更新本集成
             2. 重启 Home Assistant，或重新加载 MusicFlow 集成
-            3. 拖动进度条验证：拖动后播放应正常继续，不再静默死掉
+            3. 确认实体正常、媒体库内搜索可用
           draft: false
           prerelease: false
