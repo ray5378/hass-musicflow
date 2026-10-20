@@ -122,9 +122,9 @@ SUPPORTED_FEATURES = (
     | MediaPlayerEntityFeature.TURN_OFF
 )
 
-# SEARCH_MEDIA 是 HA 2025.5 才加进 MediaPlayerEntityFeature 的成员,而 hacs.json
-# 声明的最低核心版本是 2024.12 —— 在老核心上直接引用会 AttributeError,所以按
-# 存在性叠加。没有这个 flag 时搜索框不出现,但 async_search_media 仍然无害。
+# SEARCH_MEDIA 是 HA 2025.5 才加进 MediaPlayerEntityFeature 的成员;本集成声明的最低
+# 核心版本已是 2025.5,理论上必然存在,这里仍按存在性叠加以求稳健(缺失时搜索框不
+# 出现,但 async_search_media 仍然无害)。
 _SEARCH_MEDIA_FEATURE = getattr(MediaPlayerEntityFeature, "SEARCH_MEDIA", None)
 if _SEARCH_MEDIA_FEATURE is not None:
     SUPPORTED_FEATURES |= _SEARCH_MEDIA_FEATURE

@@ -56,7 +56,6 @@ class MusicFlowClient:
         self._username = username
         self._password = password
         self._token: str | None = None
-        self._retried = False
         self._listeners: list[Callable[[dict], None]] = []
         self._ws: aiohttp.ClientWebSocketResponse | None = None
 
@@ -84,7 +83,6 @@ class MusicFlowClient:
         if not token:
             raise MusicFlowAuthError("登录响应中缺少 token")
         self._token = token
-        self._retried = False
         return token
 
     async def _ensure_token(self) -> str:
@@ -126,8 +124,14 @@ class MusicFlowClient:
         *,
         params: dict | None = None,
         json_body: dict | None = None,
+        _retry_auth: bool = True,
     ) -> Any:
-        """发一次请求。path 必须是已编码好的完整路径(不含 host)。"""
+        """发一次请求。path 必须是已编码好的完整路径(不含 host)。
+
+        `_retry_auth` 是「本次调用还允许重新登录一次」的标记,由递归调用自己携带,
+        不用实例状态:实例状态会 (a) 让并发请求互相踩标记,(b) 被 `login()` 复位后
+        让持续 401/403 的重试无限递归直到 RecursionError。
+        """
         token = await self._ensure_token()
         url = URL(f"{self._base_url}{path}", encoded=True)
         try:
@@ -140,13 +144,16 @@ class MusicFlowClient:
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
             ) as resp:
                 if resp.status in (401, 403):
-                    # JWT 过期或被吊销:清掉后重试一次(重新登录)
-                    if self._retried:
+                    # JWT 过期或被吊销:清掉 token 后重新登录并重试一次;再失败就如实报错。
+                    if not _retry_auth:
                         raise MusicFlowAuthError(f"{method} {path} 认证失败({resp.status})")
-                    self._retried = True
                     self._token = None
                     return await self._request(
-                        method, path, params=params, json_body=json_body
+                        method,
+                        path,
+                        params=params,
+                        json_body=json_body,
+                        _retry_auth=False,
                     )
                 if resp.status >= 400:
                     text = await resp.text()

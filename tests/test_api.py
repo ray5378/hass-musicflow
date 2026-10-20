@@ -274,13 +274,7 @@ async def test_request_401_relogins_once_then_succeeds():
 
 
 async def test_request_403_relogins_once_then_succeeds():
-    """403 与 401 走同一分支：清 token → 重新登录 → 重试一次即成功。
-
-    已知缺陷（本用例只锁定可达语义，不修改生产源码）：`_request` 的
-    「只重试一次」守卫 `_retried` 会被 `login()` 末尾的 `self._retried = False`
-    复位，因此当服务端**持续**返回 401/403 时，重试会无限递归直到
-    RecursionError，`raise MusicFlowAuthError`（第 145 行）永远不可达。
-    """
+    """403 与 401 走同一分支：清 token → 重新登录 → 重试一次即成功。"""
     state = {"n": 0}
 
     def responder(method, url, kwargs):
@@ -300,6 +294,32 @@ async def test_request_403_relogins_once_then_succeeds():
     assert urls[1].endswith("/auth/login")
     assert urls[2].endswith("/users/me")
     assert client.token == "fresh"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_request_persistent_auth_failure_retries_once_then_raises(status):
+    """服务端**持续**返回 401/403 时只重试一次，随后如实抛 MusicFlowAuthError。
+
+    回归守卫：`_request` 的「只重试一次」标记必须由递归调用自己携带（`_retry_auth`
+    参数），不能用实例状态——实例状态会被 `login()` 复位，导致重试无限递归直到
+    RecursionError，`raise MusicFlowAuthError` 永远不可达。
+    """
+    state = {"n": 0}
+
+    def responder(method, url, kwargs):
+        if url.endswith("/auth/login"):
+            return json_response({"token": "fresh"})
+        state["n"] += 1
+        return FakeResponse(status=status, text="always rejected")
+
+    client, session = build(responder)
+    client._token = "stale"
+    with pytest.raises(MusicFlowAuthError, match=rf"认证失败\({status}\)"):
+        await client._api_get("/users/me")
+    # 业务请求恰好两次（首次 + 重试一次），绝无第三次
+    assert state["n"] == 2
+    # 只重新登录一次：重试期间的 token 不会再被 login() 复位成允许重试
+    assert len([r for r in session.requests if r[1].endswith("/auth/login")]) == 1
 
 
 async def test_request_other_error_status():
