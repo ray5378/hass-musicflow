@@ -745,11 +745,24 @@ async def test_async_setup_entry_creates_prunes_and_registers_services(
     ):
         assert name in services
 
-    # 剪枝：d2 从后端消失 → 实体被移除
+    # 剪枝：d2 从后端消失,但**恢复窗口内不剪**。后端重启时 /v1/peers 会瞬时
+    # 缺 peer;若立刻剪掉实体,HA 会在实体重建时回放上次音量(2026-10-21 现场:
+    # 容器重启后 HiVi 被 HA 推成 20)。
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    import custom_components.musicflow.media_player as mp_mod
+
+    t0 = mp_mod._monotonic()
+    mono = {"now": t0}
+    monkeypatch.setattr(mp_mod, "_monotonic", lambda: mono["now"])
     fake_client.responses["async_get_peers"] = [
         {"peerId": "dlna:d1", "kind": "dlna", "name": "甲", "available": True}
     ]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert {e.peer_id for e in component.entities} == {"dlna:d1", "dlna:d2"}
+
+    # 超过恢复窗口仍缺席 → 才真正剪掉
+    mono["now"] = t0 + mp_mod.PRUNE_AFTER_S + 1
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert {e.peer_id for e in component.entities} == {"dlna:d1"}

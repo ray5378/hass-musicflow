@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -130,6 +131,27 @@ if _SEARCH_MEDIA_FEATURE is not None:
     SUPPORTED_FEATURES |= _SEARCH_MEDIA_FEATURE
 
 
+# ==================== 实体剪枝的恢复窗口 ====================
+#
+# `/v1/peers` 在后端重启 / 短暂断链时会瞬时为空或缺少部分 peer。若立刻剪掉实体,
+# HA 会在实体**重新注册**时回放该 entity 的上次状态 —— 对 media_player 就是
+# `volume_level`。2026-10-21 真机现场:MusicFlow 容器重启约 1s 后,
+# UA=HomeAssistant/2026.10.2 aiohttp/3.14.5 对 `airplay:<HiVi>` 发了一次
+# `POST /v1/peers/airplay:<id>/volume {volume: 20}`,把设备音量从 48 打回 20,
+# 用户观感就是"重启容器后所有播放器被强制成 20"。
+#
+# 为什么用"窗口"而不是"永不剪":peer 被用户隐藏/删除时仍要清理实体,否则
+# 它们会永远占着 HA 的实体注册表。窗口取 120s:容器重启通常 10~25s 内 peer
+# 全部回归,窗口内不剪 = 实体不销毁重建 = HA 不回放音量;真删除的 peer 过了
+# 窗口照样会被剪掉。
+PRUNE_AFTER_S = 120.0
+
+
+def _monotonic() -> float:
+    """可测试的时钟(单测 monkeypatch 它来快进恢复窗口)。"""
+    return time.monotonic()
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -144,15 +166,34 @@ async def async_setup_entry(
     """
     coordinator: MusicFlowCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: dict[str, MusicFlowMediaPlayer] = {}
+    # peer 离场计时(单调钟秒):剪枝前的恢复窗口起点,见 PRUNE_AFTER_S。
+    missing_since: dict[str, float] = {}
 
     @callback
     def _async_sync_peers() -> None:
         # 当前 /v1/peers(经 coordinator 聚合后)的可控 peer 集合
         current = {peer.peer_id for peer in coordinator.controllable_peers()}
+        now = _monotonic()
 
-        # 1) 已消失(隐藏/删除)的 peer -> 移除对应 HA 实体
-        vanished = [pid for pid in entities if pid not in current]
+        # 0) 已回归的 peer 清掉离场计时
+        for pid in list(missing_since):
+            if pid in current:
+                missing_since.pop(pid, None)
+
+        # 1) 已消失(隐藏/删除)的 peer -> **熬过恢复窗口**才移除对应 HA 实体。
+        #    后端本轮不可达(重启/断网窗口)时整轮不剪 —— 这是"重启后音量被
+        #    强制回放"的直接触发条件,详见 PRUNE_AFTER_S 上方的现场记录。
+        vanished: list[str] = []
+        for pid in entities:
+            if pid in current:
+                continue
+            if not coordinator.last_update_success:
+                continue
+            since = missing_since.setdefault(pid, now)
+            if now - since >= PRUNE_AFTER_S:
+                vanished.append(pid)
         for pid in vanished:
+            missing_since.pop(pid, None)
             entity = entities.pop(pid)
             # 尚未完成注册的实体没有 entity_id,async_remove 会失败,跳过即可
             if entity.entity_id is None:
