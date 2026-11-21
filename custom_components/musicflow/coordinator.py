@@ -498,6 +498,21 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
         merged = dict(state.queue)
         merged.update(queue)
         state.queue = merged
+
+        # 换歌即重锚(2026-11-21):媒体进度只在 POLL_INTERVAL_SECONDS(30s) 轮询里
+        # 刷新服务端 position。换歌后若只等下轮轮询,卡片会一直显示上一首的尾巴,
+        # 等下一轮到达时新曲已经播了十几秒 ⇒ 视觉上"新曲不是从 00 秒开始"
+        # (240 实测:14:29:42 切歌,14:29:51 才蹦到 pos=9.0)。
+        # 队列事件本身带 currentIndex/items,能立刻判断当前曲目是否换了 ——
+        # 换了就把进度归零并把锚点重锚到此刻,HA 便从 0 开始插值,与真实出声一致。
+        tid = state._track_identity
+        if tid and tid != state.last_track_id:
+            state.last_track_id = tid
+            fresh = dict(state.status)
+            fresh["position"] = 0
+            state.status = fresh
+            state.status_updated_at = dt_util.utcnow()
+            state.pending_reanchor = False
         return True
 
     @callback
@@ -514,11 +529,16 @@ class MusicFlowCoordinator(DataUpdateCoordinator[dict[str, PeerState]]):
             return False
         # player_state_changed / media_changed 的 device_id 是裸 id(不含前缀)。
         # dlna / airplay / sendspin 各自是独立命名空间,都试一下(队列 key 见 QueueController)。
+        # 组也是"设备":sendspin/桥组的 device_id 就是组 id,必须再试一次 `group:` 命名空间,
+        # 否则组实体的状态推送被整条丢弃,只能等 30s 轮询 —— 240 实测:切歌后新曲已经
+        # 播了 9s 卡片才跳到 pos=9.0,用户看到的「新曲不是从 00 秒开始」。
         state = self.peers.get(f"{PEER_KIND_DLNA}:{device_id}")
         if state is None:
             state = self.peers.get(f"{PEER_KIND_AIRPLAY}:{device_id}")
         if state is None:
             state = self.peers.get(f"{PEER_KIND_SENDSPIN}:{device_id}")
+        if state is None:
+            state = self.peers.get(f"{PEER_KIND_GROUP}:{device_id}")
         if state is None:
             return False
         state.apply_status(status)
